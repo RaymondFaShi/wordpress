@@ -1,0 +1,43 @@
+2026-09-19T00:15:30+00:00 DEBUG #7903 - [New Request] POST /
+2026-09-19T00:15:30+00:00 ERROR #7903 - SDK v6 client token runtime error: Cannot request a PayPal client token without a client ID and secret.
+2026-09-19T00:15:30+00:00 DEBUG #2572 - [New Request] POST /
+2026-09-19T00:15:30+00:00 ERROR #2572 - SDK v6 client token runtime error: Cannot request a PayPal client token without a client ID and secret.
+2026-09-19T00:21:06+00:00 DEBUG #5855 - [New Request] POST /
+2026-09-19T00:21:06+00:00 ERROR #5855 - SDK v6 client token runtime error: Cannot request a PayPal client token without a client ID and secret.
+2026-09-19T00:21:07+00:00 DEBUG #9533 - [New Request] POST /
+2026-09-19T00:21:07+00:00 ERROR #9533 - SDK v6 client token runtime error: Cannot request a PayPal client token without a client ID and secret.
+2026-09-19T00:21:09+00:00 DEBUG #7276 - [New Request] POST /
+2026-09-19T00:21:09+00:00 ERROR #7276 - SDK v6 client token runtime error: Cannot request a PayPal client token without a client ID and secret.
+2026-09-19T00:22:37+00:00 DEBUG #4266 - [New Request] GET /wp-admin/admin.php
+2026-09-19T00:22:37+00:00 DEBUG #4266 - GET https://api.woocommerce.com/integrations/ppc/v1/customer/partners/K8SKZ36LQBWXJ/merchant-integrations/
+Response: Array
+(
+    [code] => 404
+    [message] => Not Found
+)
+
+Response Body: {"statusCode":404,"error":"Not Found","message":"Not Found"}
+2026-09-19T00:22:37+00:00 WARNING #4266 - [Error] Not Found CONTEXT: {"args":{"method":"GET","headers":{"Authorization":"Bearer token","Content-Type":"application/json"}},"response":{"headers":{},"body":"{\"statusCode\":404,\"error\":\"Not Found\",\"message\":\"Not Found\"}","response":{"code":404,"message":"Not Found"},"cookies":[],"filename":null,"http_response":{"data":null,"headers":null,"status":null}}}
+2026-09-19T00:22:42+00:00 DEBUG #3768 - [New Request] GET /index.php
+2026-09-19T00:22:42+00:00 DEBUG #3768 - GET https://api.woocommerce.com/integrations/ppc/v1/notifications/webhooks
+Response: Array
+(
+    [code] => 404
+    [message] => Not Found
+)
+
+Response Body: {"statusCode":404,"error":"Not Found","message":"Not Found"}
+2026-09-19T00:24:02+00:00 DEBUG #5058 - [New Request] POST /index.php
+2026-09-19T00:24:02+00:00 DEBUG #5058 - Webhook lock acquired for 'unregister'.
+2026-09-19T00:24:02+00:00 DEBUG #5058 - Webhook operation 'unregister' started.
+2026-09-19T00:24:03+00:00 DEBUG #5058 - GET https://api.woocommerce.com/integrations/ppc/v1/notifications/webhooks
+Response: Array
+(
+    [code] => 404
+    [message] => Not Found
+)
+
+Response Body: {"statusCode":404,"error":"Not Found","message":"Not Found"}
+2026-09-19T00:24:03+00:00 ERROR #5058 - Failed to delete webhooks: [Error] Not Found
+2026-09-19T00:24:03+00:00 INFO #5058 - Webhooks deleted.
+2026-09-19T00:24:03+00:00 DEBUG #5058 - Webhook lock released for 'unregister'.

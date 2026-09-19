@@ -1,0 +1,5 @@
+2026-09-19T00:13:42+00:00 INFO Payment gateway enabled: "货到付款"
+2026-09-19T00:22:20+00:00 INFO Payment gateway enabled: "银行汇款"
+2026-09-19T00:22:25+00:00 INFO Payment gateway enabled: "支票付款"
+2026-09-19T01:18:32+00:00 WARNING 从 PTK 获取 WooCommerce 样板失败：“连接 Patterns Toolkit API 失败：请稍后再试。”
+2026-09-19T07:26:01+00:00 WARNING 从 PTK 获取 WooCommerce 样板失败：“连接 Patterns Toolkit API 失败：请稍后再试。”
