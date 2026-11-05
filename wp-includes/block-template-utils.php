@@ -343,22 +343,11 @@ function _get_block_template_file( $template_type, $slug ) {
 	);
 	foreach ( $themes as $theme_slug => $theme_dir ) {
 		$template_base_paths = get_block_theme_folders( $theme_slug );
-		$template_dir        = $theme_dir . '/' . $template_base_paths[ $template_type ];
-		$file_path           = $template_dir . '/' . $slug . '.html';
-		$template_file       = realpath( $file_path );
-		$template_root       = realpath( $template_dir );
-
-		if (
-			false !== $template_file &&
-			false !== $template_root &&
-			str_starts_with(
-				wp_normalize_path( $template_file ),
-				trailingslashit( wp_normalize_path( $template_root ) )
-			)
-		) {
+		$file_path           = $theme_dir . '/' . $template_base_paths[ $template_type ] . '/' . $slug . '.html';
+		if ( file_exists( $file_path ) ) {
 			$new_template_item = array(
 				'slug'  => $slug,
-				'path'  => $template_file,
+				'path'  => $file_path,
 				'theme' => $theme_slug,
 				'type'  => $template_type,
 			);

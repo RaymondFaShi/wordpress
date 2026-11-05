@@ -2082,9 +2082,9 @@ themes.RunInstaller = {
 				self.view.collection.query( request );
 				self.view.collection.trigger( 'update' );
 
-				// Open the theme preview. The slug comes from the URL, so escape it.
+				// Open the theme preview.
 				self.view.collection.once( 'query:success', function() {
-					$( 'div.theme[data-slug="' + $.escapeSelector( slug ) + '"]' ).trigger( 'click' );
+					$( 'div[data-slug="' + slug + '"]' ).trigger( 'click' );
 				});
 
 			}

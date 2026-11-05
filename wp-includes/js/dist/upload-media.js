@@ -194,8 +194,7 @@ var wp;
       maxConcurrentUploads: DEFAULT_MAX_CONCURRENT_UPLOADS,
       maxConcurrentImageProcessing: DEFAULT_MAX_CONCURRENT_IMAGE_PROCESSING,
       retry: { ...DEFAULT_RETRY_SETTINGS }
-    },
-    failureCount: 0
+    }
   };
   function reducer(state = DEFAULT_STATE, action = { type: Type.Unknown }) {
     switch (action.type) {
@@ -236,13 +235,9 @@ var wp;
           ...state,
           queue: [...state.queue, action.item]
         };
-      case Type.Cancel: {
-        const cancelled = state.queue.find(
-          (item) => item.id === action.id
-        );
+      case Type.Cancel:
         return {
           ...state,
-          failureCount: cancelled && !cancelled.parentId ? state.failureCount + 1 : state.failureCount,
           queue: state.queue.map(
             (item) => item.id === action.id ? {
               ...item,
@@ -250,7 +245,6 @@ var wp;
             } : item
           )
         };
-      }
       case Type.RetryItem:
         return {
           ...state,
@@ -427,7 +421,6 @@ var wp;
     getAllItems: () => getAllItems,
     getBlobUrls: () => getBlobUrls,
     getFailedItems: () => getFailedItems,
-    getFailureCount: () => getFailureCount,
     getItem: () => getItem,
     getItemProgress: () => getItemProgress,
     getPendingImageProcessing: () => getPendingImageProcessing,
@@ -439,9 +432,6 @@ var wp;
   });
   function getAllItems(state) {
     return state.queue;
-  }
-  function getFailureCount(state) {
-    return state.failureCount;
   }
   function getItem(state, id) {
     return state.queue.find((item) => item.id === id);
@@ -1579,13 +1569,6 @@ var wp;
   }
   function readItemData(buffer, loc, idatOffset) {
     const baseOffset = loc.constructionMethod === 1 ? idatOffset : 0;
-    for (const ext of loc.extents) {
-      if (baseOffset + ext.offset + ext.length > buffer.byteLength) {
-        throw new Error(
-          "HEIC item data extends past the end of the file"
-        );
-      }
-    }
     if (loc.extents.length === 1) {
       const ext = loc.extents[0];
       const start = baseOffset + ext.offset;
@@ -2074,8 +2057,6 @@ var wp;
   }
 
   // packages/upload-media/build-module/canvas-utils.mjs
-  var HeicUnsupportedError = class extends Error {
-  };
   async function canvasConvertToJpeg(file, quality = 0.82) {
     const baseName = getFileBasename(file.name);
     try {
@@ -2133,57 +2114,51 @@ var wp;
         }
       }
     }
-    let heicData;
-    try {
-      heicData = parseHeic(await file.arrayBuffer());
-    } catch (error) {
-      throw new Error("The HEIC file could not be parsed", {
-        cause: error
-      });
-    }
     if (typeof VideoDecoder !== "undefined") {
-      let supported = false;
       try {
+        const heicData = parseHeic(await file.arrayBuffer());
         const support = await VideoDecoder.isConfigSupported({
           codec: heicData.codecString
         });
-        supported = support.supported === true;
+        if (support.supported) {
+          const canvas = new OffscreenCanvas(
+            heicData.outputWidth,
+            heicData.outputHeight
+          );
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            throw new Error("Could not get canvas 2d context");
+          }
+          for (const tile of heicData.tiles) {
+            const frame = await decodeHevcFrame(
+              heicData.codecString,
+              heicData.description,
+              heicData.tileWidth,
+              heicData.tileHeight,
+              tile.data
+            );
+            try {
+              ctx.drawImage(frame, tile.x, tile.y);
+            } finally {
+              frame.close();
+            }
+          }
+          const outputCanvas = heicData.rotation !== 0 ? applyRotation(canvas, heicData.rotation) : applyExifOrientation(
+            canvas,
+            heicData.exifOrientation
+          );
+          const jpegBlob = await outputCanvas.convertToBlob({
+            type: "image/jpeg",
+            quality
+          });
+          return new File([jpegBlob], `${baseName}.jpg`, {
+            type: "image/jpeg"
+          });
+        }
       } catch {
       }
-      if (supported) {
-        const canvas = new OffscreenCanvas(
-          heicData.outputWidth,
-          heicData.outputHeight
-        );
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          throw new Error("Could not get canvas 2d context");
-        }
-        for (const tile of heicData.tiles) {
-          const frame = await decodeHevcFrame(
-            heicData.codecString,
-            heicData.description,
-            heicData.tileWidth,
-            heicData.tileHeight,
-            tile.data
-          );
-          try {
-            ctx.drawImage(frame, tile.x, tile.y);
-          } finally {
-            frame.close();
-          }
-        }
-        const outputCanvas = heicData.rotation !== 0 ? applyRotation(canvas, heicData.rotation) : applyExifOrientation(canvas, heicData.exifOrientation);
-        const jpegBlob = await outputCanvas.convertToBlob({
-          type: "image/jpeg",
-          quality
-        });
-        return new File([jpegBlob], `${baseName}.jpg`, {
-          type: "image/jpeg"
-        });
-      }
     }
-    throw new HeicUnsupportedError(getHeicUnsupportedMessage());
+    throw new Error(getHeicUnsupportedMessage());
   }
   function applyRotation(source, rotation) {
     if (rotation === 0) {
@@ -2861,17 +2836,13 @@ var wp;
             file,
             settings.imageQuality ?? DEFAULT_OUTPUT_QUALITY
           );
-        } catch (error) {
-          const unsupported = error instanceof HeicUnsupportedError;
+        } catch {
           dispatch.cancelItem(
             id,
             new UploadError({
-              code: unsupported ? ErrorCode.HEIC_DECODE_ERROR : ErrorCode.IMAGE_TRANSCODING_ERROR,
-              message: unsupported ? getHeicUnsupportedMessage() : (0, import_i18n7.__)(
-                "This HEIC image could not be converted. Try converting it to JPEG before uploading."
-              ),
-              file,
-              cause: error instanceof Error ? error : void 0
+              code: ErrorCode.HEIC_DECODE_ERROR,
+              message: getHeicUnsupportedMessage(),
+              file
             })
           );
           return;
