@@ -1,0 +1,925 @@
+<?php
+
+namespace FluentCrm\App\Services\ExternalIntegrations\FluentForm;
+
+use FluentCrm\App\Models\Company;
+use FluentCrm\App\Models\CustomCompanyField;
+use FluentCrm\App\Models\CustomContactField;
+use FluentCrm\App\Models\Lists;
+use FluentCrm\App\Models\Subscriber;
+use FluentCrm\App\Models\Tag;
+use FluentCrm\App\Services\Funnel\FunnelHelper;
+use FluentCrm\App\Services\Helper as CrmHelper;
+use FluentCrm\App\Services\Sanitize;
+use FluentCrm\Framework\Support\Arr;
+use FluentForm\App\Http\Controllers\IntegrationManagerController;
+use FluentForm\App\Modules\Form\FormFieldsParser;
+use FluentForm\App\Services\FormBuilder\ShortCodeParser;
+use FluentForm\App\Services\Integrations\GlobalNotificationService;
+use FluentForm\Framework\Helpers\ArrayHelper;
+
+class Bootstrap extends IntegrationManagerController
+{
+    public $hasGlobalMenu = false;
+
+    public $disableGlobalSettings = 'yes';
+
+    public function __construct()
+    {
+        parent::__construct(
+            null,
+            __('FluentCRM', 'fluent-crm'),
+            'fluentcrm',
+            '_fluentform_fluentcrm_settings',
+            'fluentcrm_feeds',
+            10
+        );
+
+        $this->logo = FLUENTCRM_PLUGIN_URL . 'assets/images/fluentcrm-logo.svg';
+
+        $this->description = __('Connect FluentCRM with Fluent Forms and subscribe a contact when a form is submitted.', 'fluent-crm');
+
+        $this->registerAdminHooks();
+
+        add_filter('fluentform/notifying_async_fluentcrm', '__return_false');
+
+        $this->registerPaymentEvents();
+
+    }
+
+    public function pushIntegration($integrations, $formId)
+    {
+        $integrations[$this->integrationKey] = [
+            'title'                 => $this->title . ' Integration',
+            'logo'                  => $this->logo,
+            'is_active'             => $this->isConfigured(),
+            'configure_title'       => __('Configuration required', 'fluent-crm'),
+            'global_configure_url'  => '#',
+            'configure_message'     => __('FluentCRM is not configured yet. Please configure your FluentCRM API first.', 'fluent-crm'),
+            'configure_button_text' => __('Set FluentCRM', 'fluent-crm')
+        ];
+        return $integrations;
+    }
+
+    public function getIntegrationDefaults($settings, $formId)
+    {
+        return [
+            'name'                   => '',
+            'first_name'             => '',
+            'last_name'              => '',
+            'full_name'              => '',
+            'email'                  => '',
+            'other_fields'           => [
+                [
+                    'item_value' => '',
+                    'label'      => ''
+                ]
+            ],
+            'company_fields'         => [
+                [
+                    'item_value' => '',
+                    'label'      => ''
+                ]
+            ],
+            'list_id'                => '',
+            'tag_ids'                => [],
+            'tag_ids_selection_type' => 'simple',
+            'tag_routers'            => [],
+            'skip_if_exists'         => false,
+            'double_opt_in'          => false,
+            'force_subscribe'        => false,
+            'skip_primary_data'      => false,
+            'conditionals'           => [
+                'conditions' => [],
+                'status'     => false,
+                'type'       => 'all'
+            ],
+            'run_events_only'        => [],
+            'remove_tags'            => [],
+            'enabled'                => true
+        ];
+    }
+
+    public function getSettingsFields($settings, $formId)
+    {
+        $form = fluentFormApi('forms')->find($formId);
+        $paymentFields = FormFieldsParser::getPaymentFields($form, ['element']);
+
+        $fieldOptions = [];
+
+        foreach (Subscriber::mappables() as $key => $column) {
+            $fieldOptions[$key] = $column;
+        }
+
+        foreach ((new CustomContactField)->getGlobalFields()['fields'] as $field) {
+            $fieldOptions[$field['slug']] = $field['label'];
+        }
+
+        $fieldOptions['avatar'] = 'Profile Photo';
+
+        unset($fieldOptions['email']);
+        unset($fieldOptions['first_name']);
+        unset($fieldOptions['last_name']);
+
+        $fields = [
+            [
+                'key'         => 'name',
+                'label'       => __('Feed Name', 'fluent-crm'),
+                'required'    => true,
+                'placeholder' => __('Your Feed Name', 'fluent-crm'),
+                'component'   => 'text'
+            ],
+            [
+                'key'         => 'list_id',
+                'label'       => __('FluentCRM List', 'fluent-crm'),
+                'placeholder' => __('Select FluentCRM List', 'fluent-crm'),
+                'tips'        => __('Select the FluentCRM List you would like to add your contacts to.', 'fluent-crm'),
+                'component'   => 'select',
+                'required'    => false,
+                'options'     => $this->getLists(),
+            ],
+            [
+                'key'                => 'CustomFields',
+                'require_list'       => false,
+                'label'              => __('Primary Fields', 'fluent-crm'),
+                'tips'               => __('Associate your FluentCRM merge tags with the appropriate Fluent Forms fields by selecting a form field from the list.', 'fluent-crm'),
+                'component'          => 'map_fields',
+                'field_label_remote' => __('FluentCRM Field', 'fluent-crm'),
+                'field_label_local'  => __('Form Field', 'fluent-crm'),
+                'primary_fileds'     => [
+                    [
+                        'key'           => 'email',
+                        'label'         => __('Email address', 'fluent-crm'),
+                        'required'      => true,
+                        'input_options' => 'emails'
+                    ],
+                    [
+                        'key'   => 'first_name',
+                        'label' => __('First name', 'fluent-crm')
+                    ],
+                    [
+                        'key'   => 'last_name',
+                        'label' => __('Last name', 'fluent-crm')
+                    ],
+                    [
+                        'key'       => 'full_name',
+                        'label'     => __('Full Name', 'fluent-crm'),
+                        'help_text' => __('If First Name and Last Name are not available, the full name will be split into first and last name', 'fluent-crm')
+                    ]
+                ]
+            ],
+            [
+                'key'                => 'other_fields',
+                'require_list'       => false,
+                'label'              => __('Other Fields', 'fluent-crm'),
+                'tips'               => __('Select which Fluent Forms fields pair with their<br /> respective FluentCRM fields.', 'fluent-crm'),
+                'component'          => 'dropdown_many_fields',
+                'field_label_remote' => __('FluentCRM Field', 'fluent-crm'),
+                'field_label_local'  => __('Form Field', 'fluent-crm'),
+                'options'            => $fieldOptions
+            ],
+            [
+                'key'                => 'tag_ids',
+                'require_list'       => false,
+                'label'              => __('Contact Tags', 'fluent-crm'),
+                'placeholder'        => __('Select tags', 'fluent-crm'),
+                'component'          => 'selection_routing',
+                'simple_component'   => 'select',
+                'routing_input_type' => 'select',
+                'routing_key'        => 'tag_ids_selection_type',
+                'settings_key'       => 'tag_routers',
+                'is_multiple'        => true,
+                'labels'             => [
+                    'choice_label'      => __('Enable Dynamic Tag Selection', 'fluent-crm'),
+                    'input_label'       => '',
+                    'input_placeholder' => __('Set Tag', 'fluent-crm')
+                ],
+                'options'            => $this->getTags()
+            ],
+            [
+                'key'            => 'skip_if_exists',
+                'require_list'   => false,
+                'checkbox_label' => __('Skip if contact already exists in FluentCRM', 'fluent-crm'),
+                'component'      => 'checkbox-single'
+            ],
+            [
+                'key'            => 'skip_primary_data',
+                'require_list'   => false,
+                'checkbox_label' => __('Keep existing first and last names', 'fluent-crm'),
+                'component'      => 'checkbox-single',
+                'inline_tip'     => __('If the existing contact already has a first name, the form will not update the first or last name.', 'fluent-crm')
+            ],
+            [
+                'key'            => 'double_opt_in',
+                'require_list'   => false,
+                'checkbox_label' => __('Enable double opt-in for new contacts', 'fluent-crm'),
+                'component'      => 'checkbox-single'
+            ],
+            [
+                'key'            => 'force_subscribe',
+                'require_list'   => false,
+                'checkbox_label' => __('Enable force subscribe if the contact is not subscribed (existing contacts only)', 'fluent-crm'),
+                'component'      => 'checkbox-single',
+                'inline_tip'     => __('If you enable this, the contact will be forcefully subscribed regardless of the contact\'s current status', 'fluent-crm')
+            ],
+            [
+                'require_list' => false,
+                'key'          => 'conditionals',
+                'label'        => __('Conditional Logic', 'fluent-crm'),
+                'tips'         => __('Allow FluentCRM integration conditionally based on your submission values', 'fluent-crm'),
+                'component'    => 'conditional_block'
+            ]
+        ];
+
+        if (CrmHelper::isCompanyEnabled()) {
+            $companyField = [
+                'key'                => 'company_fields',
+                'require_list'       => false,
+                'label'              => __('Company Fields (Optional)', 'fluent-crm'),
+                'tips'               => __('Map Company Name to synchronize a company only when creating a new contact. If an exact-name company already exists, it will be attached without updating its data. Otherwise, a new company will be created from the mapped fields and attached. Existing contacts and their company relationships will remain unchanged. This mapping takes precedence over Primary Company in Other Fields. Leave Company Name unmapped for contact-only feeds.', 'fluent-crm'),
+                'component'          => 'dropdown_many_fields',
+                'field_label_remote' => __('FluentCRM Company Field', 'fluent-crm'),
+                'field_label_local'  => __('Form Field', 'fluent-crm'),
+                'options'            => $this->getCompanyFieldOptions()
+            ];
+
+            // Keep company mapping beside contact Other Fields in the feed UI.
+            array_splice($fields, 4, 0, [$companyField]);
+        }
+
+        if ($paymentFields) {
+            $hasSubscriptionFields = !!FormFieldsParser::getInputsByElementTypes($form, ['subscription_payment_component']);
+
+            $options = [
+                'fluentform/payment_refunded' => __('On Payment Refund', 'fluent-crm')
+            ];
+
+            if ($hasSubscriptionFields) {
+                $options = [
+                    'fluentform/subscription_payment_active'   => __('On Subscription Active', 'fluent-crm'),
+                    'fluentform/subscription_payment_canceled' => __('On Subscription Cancel', 'fluent-crm'),
+                    'fluentform/payment_refunded'              => __('On Payment Refund', 'fluent-crm')
+                ];
+            }
+
+            $fields[] = [
+                'require_list' => false,
+                'key'          => 'run_events_only',
+                'label'        => __('Run only on events', 'fluent-crm'),
+                'component'    => 'checkbox-multiple-text',
+                'options'      => $options,
+                'tips'         => __('If you check any of the events, then this feed will only run for the selected events', 'fluent-crm')
+            ];
+        }
+
+        $fields[] = [
+            'require_list' => false,
+            'key'          => 'remove_tags',
+            'label'        => __('Remove Contact Tags', 'fluent-crm'),
+            'placeholder'  => __('Select Tags (remove from contact)', 'fluent-crm'),
+            'tips'         => __('(Optional) The selected tags will be removed from the contact (if it exists)', 'fluent-crm'),
+            'component'    => 'select',
+            'is_multiple'  => true,
+            'required'     => false,
+            'options'      => $this->getTags(),
+        ];
+
+        $fields[] = [
+            'require_list'   => false,
+            'key'            => 'enabled',
+            'label'          => __('Status', 'fluent-crm'),
+            'component'      => 'checkbox-single',
+            'checkbox_label' => __('Enable this feed', 'fluent-crm')
+        ];
+
+        return [
+            'fields'              => $fields,
+            'button_require_list' => false,
+            'integration_title'   => $this->title
+        ];
+    }
+
+    public function getMergeFields($list, $listId, $formId)
+    {
+        return [];
+    }
+
+    protected function getLists()
+    {
+        $lists = Lists::orderBy('title', 'ASC')->get();
+        $formattedLists = [];
+        foreach ($lists as $list) {
+            $formattedLists[$list->id] = $list->title;
+        }
+        return $formattedLists;
+    }
+
+    protected function getTags()
+    {
+        $tags = Tag::orderBy('title', 'ASC')->get();
+        $formattedTags = [];
+        foreach ($tags as $tag) {
+            $formattedTags[strval($tag->id)] = $tag->title;
+        }
+        return $formattedTags;
+    }
+
+    /**
+     * Get standard and custom company fields available to the feed mapper.
+     *
+     * @return array
+     */
+    private function getCompanyFieldOptions()
+    {
+        $fields = Company::mappables();
+        unset($fields['owner_email'], $fields['owner_name']);
+
+        foreach ((new CustomCompanyField())->getGlobalFields()['fields'] as $field) {
+            if (!empty($field['slug'])) {
+                $fields[$field['slug']] = $field['label'];
+            }
+        }
+
+        return $fields;
+    }
+
+    /*
+     * Form Submission Hooks Here
+     */
+    public function notify($feed, $formData, $entry, $form)
+    {
+        // check if only on payment event
+        if (Arr::get($feed, 'settings.run_events_only')) {
+            // We have running events selected. So we may not run this feed.
+            $paymentFields = FormFieldsParser::getPaymentFields($form, ['element']);
+            if ($paymentFields) {
+                return false;
+            }
+        }
+
+        return $this->runFeed($feed, $formData, $entry, $form);
+    }
+
+
+    /**
+     * Process a contact feed and report configured company sync failures to direct callers.
+     *
+     * @param array  $feed
+     * @param array  $formData
+     * @param object $entry
+     * @param object $form
+     * @return false|null
+     */
+    private function runFeed($feed, $formData, $entry, $form)
+    {
+        $data = $feed['processedValues'];
+        $companyData = $this->prepareCompanyData($data);
+        $contact = Arr::only($data, ['first_name', 'last_name', 'email']);
+
+        if (!is_email($contact['email'])) {
+            $contact['email'] = ArrayHelper::get($formData, $contact['email']);
+        }
+
+        if (!$contact['first_name'] && !$contact['last_name']) {
+            $fullName = Arr::get($data, 'full_name');
+            if ($fullName) {
+                $nameArray = explode(' ', $fullName);
+                if (count($nameArray) > 1) {
+                    $contact['last_name'] = array_pop($nameArray);
+                    $contact['first_name'] = implode(' ', $nameArray);
+                } else {
+                    $contact['first_name'] = $fullName;
+                }
+            }
+        }
+
+        $customFieldModel = new CustomContactField();
+        $customFieldSlugs = array_column($customFieldModel->getGlobalFields()['fields'], 'slug');
+        $customValues = [];
+
+        // Only the contact fields the feed settings offer. A saved label is otherwise free text, and
+        // the contact model also accepts columns such as user_id and total_points.
+        $contactFieldKeys = array_diff(
+            array_merge(array_keys(Subscriber::mappables()), ['avatar']),
+            ['email', 'first_name', 'last_name']
+        );
+
+        foreach (Arr::get($data, 'other_fields') as $fieldIndex => $field) {
+            $fieldName = Arr::get($field, 'label');
+            $fieldValue = str_replace('<br />', ' ', Arr::get($field, 'item_value'));
+
+            if (in_array($fieldName, $customFieldSlugs, true)) {
+                // Parsed smartcodes lose the distinction between omitted and submitted-empty inputs.
+                $mapping = Arr::get($feed, 'settings.other_fields.' . $fieldIndex . '.item_value', '');
+                if (is_string($fieldValue) && trim($fieldValue) === '' && is_string($mapping) &&
+                    preg_match_all('/{+inputs\.([^{}]+)}/', $mapping, $matches)) {
+                    foreach ($matches[1] as $input) {
+                        // Fluent Forms supports nested input paths and .value/.label modifiers.
+                        $input = preg_replace('/\.(value|label)$/', '', $input);
+                        if (!Arr::has($formData, $input)) {
+                            continue 2;
+                        }
+                    }
+                }
+                // Preserve an explicit empty value so an existing custom field can be cleared.
+                $customValues[$fieldName] = $fieldValue;
+            } else if (in_array($fieldName, $contactFieldKeys, true) && !in_array($fieldValue, ['', null, []], true)) {
+                $contact[$fieldName] = $fieldValue;
+            }
+        }
+
+        if ($customValues) {
+            $contact['custom_values'] = $customFieldModel->formatCustomFieldValues($customValues);
+        }
+
+        // A mapped contact company_id applies only to the legacy ID flow.
+        if (!empty($companyData['name'])) {
+            unset($contact['company_id']);
+        }
+
+        if ($entry->ip) {
+            $contact['ip'] = $entry->ip;
+        }
+
+        if (!is_email($contact['email'])) {
+            $this->addLog(
+                $feed['settings']['name'],
+                'failed',
+                __('FluentCRM API call skipped because no valid email address is available', 'fluent-crm'),
+                $form->id,
+                $entry->id
+            );
+            return false;
+        }
+
+        if (isset($contact['country'])) {
+            $country = FunnelHelper::getCountryShortName($contact['country']);
+            if ($country) {
+                $contact['country'] = $country;
+            } else {
+                unset($contact['country']);
+            }
+        }
+
+        $subscriber = Subscriber::where('email', $contact['email'])->first();
+
+        if ($subscriber && Arr::isTrue($data, 'skip_if_exists')) {
+            $this->addLog(
+                $feed['settings']['name'],
+                'info',
+                __('Contact creation has been skipped because the contact already exists in the database', 'fluent-crm'),
+                $form->id,
+                $entry->id
+            );
+            return false;
+        }
+
+
+        if (!empty($contact['avatar'])) {
+            // validate the avatar photo
+            $validUrl = '';
+            if (filter_var($contact['avatar'], FILTER_VALIDATE_URL) !== FALSE) {
+                $url = $contact['avatar'];
+                $dots = explode('.', $url);
+                $ext = strtolower(end($dots));
+
+                if (in_array($ext, ['png', 'jpg', 'jpeg', 'webp', 'gif'])) {
+                    $validUrl = $contact['avatar'];
+                }
+            }
+
+            if (!$validUrl) {
+                unset($contact['avatar']);
+            }
+        }
+
+        if ($subscriber) {
+            if ($subscriber->ip && isset($contact['ip'])) {
+                unset($contact['ip']);
+            }
+
+            if (Arr::isTrue($data, 'skip_primary_data')) {
+                if ($subscriber->first_name) {
+                    unset($contact['first_name']);
+                    unset($contact['last_name']);
+                }
+            }
+        }
+
+        $user = get_user_by('email', $contact['email']);
+        if ($user) {
+            $contact['user_id'] = $user->ID;
+        }
+
+        $tags = $this->getSelectedTagIds($data, $formData, 'tag_ids');
+        if ($tags) {
+            $contact['tags'] = $tags;
+        }
+
+        if (!$subscriber) {
+            if (empty($contact['source'])) {
+                $contact['source'] = 'FluentForms';
+            }
+
+            if (Arr::isTrue($data, 'double_opt_in')) {
+                $contact['status'] = 'pending';
+            } else {
+                $contact['status'] = 'subscribed';
+            }
+
+            if ($listId = Arr::get($data, 'list_id')) {
+                $contact['lists'] = [$listId];
+            }
+
+            $subscriber = FluentCrmApi('contacts')->createOrUpdate($contact, false, !empty($customValues));
+
+            if (!$subscriber) {
+                return false;
+            }
+
+            if ($entry->status == 'confirmed' && $subscriber->status != 'subscribed') {
+                $subscriber = $subscriber->updateStatus('subscribed');
+            }
+
+            if (Arr::isTrue($data, 'double_opt_in') && $subscriber->status != 'subscribed') {
+                $subscriber->sendDoubleOptinEmail();
+            }
+
+            $companySyncResult = $this->syncCompany($subscriber, $companyData, $feed, $entry, $form);
+
+            if ($companySyncResult !== false) {
+                $this->addLog(
+                    $feed['settings']['name'],
+                    'success',
+                    /* translators: %d: FluentCRM contact ID */
+                    sprintf(__('Contact has been created in FluentCRM. Contact ID: %d', 'fluent-crm'), $subscriber->id),
+                    $form->id,
+                    $entry->id
+                );
+            }
+
+            do_action('fluent_crm/contact_added_by_fluentform', $subscriber, $entry, $form, $feed);
+
+            if ($companySyncResult === false) {
+                return false;
+            }
+
+        } else {
+
+            if ($listId = Arr::get($data, 'list_id')) {
+                $contact['lists'] = [$listId];
+            }
+
+            $hasDouBleOptIn = Arr::isTrue($data, 'double_opt_in');
+
+            // Only the feed's "force subscribe" setting may overwrite a suppressed status.
+            // A public form submission is not proof of re-consent.
+            $forceSubscribed = Arr::isTrue($data, 'force_subscribe');
+
+            if ($forceSubscribed || !$hasDouBleOptIn) {
+                $contact['status'] = 'subscribed';
+            }
+
+            $originalFields = FluentCrmApi('contacts')->getContact($contact['email'])->getOriginal();
+
+            $currentCustomValues = $subscriber->custom_fields();
+
+            $subscriber = FluentCrmApi('contacts')->createOrUpdate($contact, $forceSubscribed, !empty($customValues));
+
+            if (!$subscriber) {
+                return false;
+            }
+
+            if ($entry->status == 'confirmed' && $subscriber->status != 'subscribed') {
+                $subscriber = $subscriber->updateStatus('subscribed');
+            }
+
+            // A double opt-in feed re-invites any non-subscribed contact without writing status.
+            if ($hasDouBleOptIn && $subscriber->status != 'subscribed') {
+                $subscriber->sendDoubleOptinEmail();
+            }
+
+            if (!empty($companyData['name'])) {
+                $this->addLog(
+                    $feed['settings']['name'],
+                    'info',
+                    __('Company synchronization was skipped because the contact already exists in FluentCRM.', 'fluent-crm'),
+                    $form->id,
+                    $entry->id
+                );
+            }
+
+            do_action('fluent_crm/contact_updated_by_fluentform', $subscriber, $entry, $form, $feed);
+
+            if ($removeTags = Arr::get($feed, 'settings.remove_tags', [])) {
+                $subscriber->detachTags($removeTags);
+            }
+
+            $dirtyFields = array_merge($feed['processedValues'], ['dirty_custom_fields' => $currentCustomValues]);
+            do_action('fluent_crm/contact_updated_with_changes', $subscriber, $dirtyFields, $originalFields, ['source' => 'fluentform', 'formId' => $form->id]);
+
+            $this->addLog(
+                $feed['settings']['name'],
+                'success',
+                /* translators: %d: FluentCRM contact ID */
+                sprintf(__('Contact has been updated in FluentCRM. Contact ID: %d', 'fluent-crm'), $subscriber->id),
+                $form->id,
+                $entry->id
+            );
+        }
+
+    }
+
+    /**
+     * Build a sanitized company payload from processed Fluent Forms mappings.
+     *
+     * @param array $data
+     * @return array
+     */
+    private function prepareCompanyData($data)
+    {
+        if (!CrmHelper::isCompanyEnabled()) {
+            return [];
+        }
+
+        $allowedFields = array_keys(Company::mappables());
+        $allowedFields = array_diff($allowedFields, ['owner_email', 'owner_name']);
+        $customFields = (new CustomCompanyField())->getGlobalFields()['fields'];
+        $customFieldSlugs = array_column($customFields, 'slug');
+        $companyData = [];
+        $customValues = [];
+
+        foreach ((array) Arr::get($data, 'company_fields', []) as $field) {
+            $key = Arr::get($field, 'label');
+            $value = Arr::get($field, 'item_value');
+
+            if ($value === '' || $value === null || $value === []) {
+                continue;
+            }
+
+            if (in_array($key, $allowedFields, true) && is_scalar($value)) {
+                $companyData[$key] = str_replace('<br />', ' ', (string) $value);
+                continue;
+            }
+
+            if (in_array($key, $customFieldSlugs, true)) {
+                $customValues[$key] = is_scalar($value)
+                    ? str_replace('<br />', ' ', (string) $value)
+                    : $value;
+            }
+        }
+
+        if ($customValues) {
+            $companyData['custom_values'] = $customValues;
+        }
+
+        $companyData = Sanitize::company($companyData);
+
+        if (!empty($companyData['name'])) {
+            // Keep exact-name lookup aligned with the fc_companies.name column.
+            $companyData['name'] = mb_substr($companyData['name'], 0, 192, 'UTF-8');
+        }
+
+        return $companyData;
+    }
+
+    /**
+     * Resolve an exact-name company without updating it, or create a new company.
+     *
+     * @param array $companyData
+     * @return Company
+     */
+    private function resolveOrCreateCompany($companyData)
+    {
+        $customValues = Arr::get($companyData, 'custom_values', []);
+        $companyData['meta'] = [
+            'custom_values' => Sanitize::companyCustomValues($customValues)
+        ];
+
+        // Existing companies are shared CRM records; public form values may only create new records.
+        $company = Company::query()->firstOrCreate(
+            ['name' => $companyData['name']],
+            $companyData
+        );
+
+        if ($company->wasRecentlyCreated) {
+            do_action('fluent_crm/company_created', $company, $companyData);
+        }
+
+        return $company;
+    }
+
+    /**
+     * Resolve or create a mapped company and associate it with the contact.
+     *
+     * @param Subscriber $subscriber
+     * @param array      $companyData
+     * @param array      $feed
+     * @param object     $entry
+     * @param object     $form
+     * @return Company|false|null
+     */
+    private function syncCompany($subscriber, $companyData, $feed, $entry, $form)
+    {
+        if (empty($companyData['name'])) {
+            return null;
+        }
+
+        try {
+            $company = $this->resolveOrCreateCompany($companyData);
+            if (!$company) {
+                $this->addLog(
+                    Arr::get($feed, 'settings.name', 'FluentCRM'),
+                    'failed',
+                    __('Company could not be resolved or created in FluentCRM.', 'fluent-crm'),
+                    $form->id,
+                    $entry->id
+                );
+                return false;
+            }
+
+            $attached = FluentCrmApi('companies')->attachContactsByIds(
+                [$subscriber->id],
+                [$company->id]
+            );
+
+            if (!$attached) {
+                $this->addLog(
+                    Arr::get($feed, 'settings.name', 'FluentCRM'),
+                    'failed',
+                    __('Company was synced but could not be attached to the contact.', 'fluent-crm'),
+                    $form->id,
+                    $entry->id
+                );
+                return false;
+            }
+
+            $this->addLog(
+                Arr::get($feed, 'settings.name', 'FluentCRM'),
+                'success',
+                /* translators: %d: FluentCRM company ID */
+                sprintf(__('Company has been synced and attached in FluentCRM. Company ID: %d', 'fluent-crm'), $company->id),
+                $form->id,
+                $entry->id
+            );
+
+            return $company;
+        } catch (\Throwable $exception) {
+            CrmHelper::debugLog(
+                'Fluent Forms company sync failed',
+                $exception->getMessage(),
+                'error'
+            );
+
+            $this->addLog(
+                Arr::get($feed, 'settings.name', 'FluentCRM'),
+                'failed',
+                __('Company could not be synced with the FluentCRM contact.', 'fluent-crm'),
+                $form->id,
+                $entry->id
+            );
+
+            return false;
+        }
+    }
+
+    public function isConfigured()
+    {
+        return true;
+    }
+
+    public function isEnabled()
+    {
+        return true;
+    }
+
+    protected function addLog($title, $status, $description, $formId, $entryId)
+    {
+        do_action('ff_log_data', [
+            'title'            => $title,
+            'status'           => $status,
+            'description'      => $description,
+            'parent_source_id' => $formId,
+            'source_id'        => $entryId,
+            'component'        => $this->integrationKey,
+            'source_type'      => 'submission_item'
+        ]);
+    }
+
+    /*
+     * We will remove this in future
+     */
+    protected function getSelectedTagIds($data, $inputData, $simpleKey = 'tag_ids', $routingId = 'tag_ids_selection_type', $routersKey = 'tag_routers')
+    {
+        $routing = ArrayHelper::get($data, $routingId, 'simple');
+        if (!$routing || $routing == 'simple') {
+            return ArrayHelper::get($data, $simpleKey, []);
+        }
+
+        $routers = ArrayHelper::get($data, $routersKey);
+        if (empty($routers)) {
+            return [];
+        }
+
+        return $this->evaluateRoutings($routers, $inputData);
+    }
+
+    /*
+     * We will remove this in future
+     */
+    protected function evaluateRoutings($routings, $inputData)
+    {
+        $validInputs = [];
+        foreach ($routings as $routing) {
+            $inputValue = ArrayHelper::get($routing, 'input_value');
+            if (!$inputValue) {
+                continue;
+            }
+            $condition = [
+                'conditionals' => [
+                    'status'     => true,
+                    'is_test'    => true,
+                    'type'       => 'any',
+                    'conditions' => [
+                        $routing
+                    ]
+                ]
+            ];
+
+            if (\FluentForm\App\Services\ConditionAssesor::evaluate($condition, $inputData)) {
+                $validInputs[] = $inputValue;
+            }
+        }
+
+        return $validInputs;
+    }
+
+    private function registerPaymentEvents()
+    {
+        add_action('fluentform/subscription_payment_active', function ($subscription, $submission) {
+            $this->handlePaymentEvent($submission, 'fluentform/subscription_payment_active');
+        }, 10, 2);
+        add_action('fluentform/subscription_payment_canceled', function ($subscription, $submission) {
+            $this->handlePaymentEvent($submission, 'fluentform/subscription_payment_canceled');
+        }, 10, 2);
+
+        add_action('fluentform/payment_refunded', function ($refund, $transaction, $submission) {
+            $this->handlePaymentEvent($submission, 'fluentform/payment_refunded');
+        }, 10, 3);
+    }
+
+    private function handlePaymentEvent($submission, $event)
+    {
+        // Get Fluent Forms Feeds
+        $feeds = fluentCrmDb()->table('fluentform_form_meta')
+            ->where('form_id', $submission->form_id)
+            ->where('meta_key', 'fluentcrm_feeds')
+            ->orderBy('id', 'ASC')
+            ->get();
+
+        if ($feeds->isEmpty()) {
+            return false;
+        }
+        if (!is_array($submission->response)) {
+            $formData = json_decode($submission->response, true);
+        } else {
+            $formData = $submission->response;
+        }
+
+        $form = fluentFormApi('forms')->find($submission->form_id);
+
+        $notificationService = new GlobalNotificationService();
+
+        foreach ($feeds as $feed) {
+            $parsedValue = json_decode($feed->value, true);
+            if ($parsedValue && ArrayHelper::isTrue($parsedValue, 'enabled')) {
+
+                $runEvents = ArrayHelper::get($parsedValue, 'run_events_only', []);
+
+                // check if this is our event or not
+                if (!$runEvents || !in_array($event, $runEvents)) {
+                    continue;
+                }
+
+                // Now check if conditions matched or not
+                $isConditionMatched = $notificationService->checkCondition($parsedValue, $formData, $submission->id);
+                if ($isConditionMatched) {
+                    $item = [
+                        'id'       => $feed->id,
+                        'meta_key' => $feed->meta_key,
+                        'settings' => $parsedValue
+                    ];
+
+                    $processedValues = $item['settings'];
+                    unset($processedValues['conditionals']);
+
+                    $item['processedValues'] = ShortCodeParser::parse($processedValues, $submission->id, $formData, $form, false, $feed->meta_key);
+
+                    $this->runFeed($item, $formData, $submission, $form);
+
+                }
+            }
+        }
+
+    }
+}
