@@ -1,0 +1,191 @@
+@charset "UTF-8";
+/* ==========================================================================
+   guide.css — 左ナビ付きガイド詳細（guide.html）
+   読み込み順：normalize.css → bootstrap.min.css → common.css → guide.css
+   ・common.css の共通パーツ（.btn / .crumbs / .editor-content 等）は再定義しない。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. ページ枠・2カラムレイアウト
+   -------------------------------------------------------------------------- */
+.guide{padding-block:18px 40px}
+.guide__layout{--bs-gutter-x:var(--gap);--bs-gutter-y:16px}
+
+/* サイドバー：lg未満は Bootstrap offcanvas、lg以上は通常カラム */
+.guide-side{
+  --bs-offcanvas-width:300px;
+  --bs-offcanvas-padding-x:14px;
+  --bs-offcanvas-padding-y:14px;
+}
+@media (min-width:992px){
+  /* 追従ヘッダー（圧縮時 約60px）に隠れないよう下に余白を持たせる */
+  .guide-side{position:sticky;top:76px;max-height:calc(100vh - 92px);overflow-y:auto}
+}
+/* offcanvas-body は lg 以上で display:flex になるため、内側を全幅に広げる */
+.guide-side .offcanvas-body{display:flex;flex-direction:column;gap:12px;width:100%}
+
+/* --------------------------------------------------------------------------
+   2. モバイル用トリガー
+   -------------------------------------------------------------------------- */
+.guide-toggle{
+  display:flex;
+  align-items:center;
+  gap:9px;
+  width:100%;
+  margin-bottom:14px;
+  padding:11px 14px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--white);
+  color:var(--navy);
+  font-size:13px;
+  font-weight:700;
+  text-align:left;
+  cursor:pointer;
+}
+.guide-toggle__icon{font-size:20px;color:var(--cta);flex:0 0 auto}
+.guide-toggle__current{margin-left:auto;font-size:11.5px;font-weight:600;color:var(--muted)}
+.guide-toggle__chev{font-size:14px;color:var(--muted);flex:0 0 auto}
+
+/* --------------------------------------------------------------------------
+   3. 左：記事ナビ
+   -------------------------------------------------------------------------- */
+.guide-nav{
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--white);
+}
+.guide-nav__label{
+  padding:13px 16px;
+  border-bottom:1px solid var(--line);
+  background:var(--bg);
+  font-size:12.5px;
+  font-weight:700;
+  color:var(--navy);
+}
+.guide-nav__group + .guide-nav__group{border-top:1px solid var(--line)}
+.guide-nav__list{padding:6px}
+.guide-nav__link{
+  position:relative;
+  display:block;
+  padding:10px 12px 10px 14px;
+  border-radius:var(--radius-sm);
+  font-size:12.5px;
+  font-weight:600;
+  line-height:1.5;
+  color:var(--ink);
+  transition:background .16s var(--ease),color .16s var(--ease);
+}
+.guide-nav__link:hover{background:var(--blue);color:var(--cta)}
+.guide-nav__link.is-active{background:var(--blue);color:var(--cta)}
+.guide-nav__link.is-active::before{
+  content:"";
+  position:absolute;
+  top:50%;
+  left:4px;
+  width:3px;
+  height:16px;
+  border-radius:2px;
+  background:var(--cta);
+  transform:translateY(-50%);
+}
+
+.guide-side__cta{
+  display:block;
+  padding:14px 16px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--blue);
+  transition:border-color .16s var(--ease);
+}
+.guide-side__cta:hover{border-color:var(--cta)}
+.guide-side__cta-title{display:block;font-size:12.5px;font-weight:700;color:var(--navy)}
+.guide-side__cta-text{display:block;margin-top:4px;font-size:11.5px;line-height:1.7;color:var(--muted)}
+
+/* --------------------------------------------------------------------------
+   4. 右：本文
+   -------------------------------------------------------------------------- */
+.guide-article{
+  padding:22px 24px 26px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--white);
+}
+.guide-article__head{
+  padding-bottom:16px;
+  border-bottom:1px solid var(--line);
+}
+.guide-article__tag{
+  display:inline-block;
+  margin-bottom:9px;
+  padding:2px 10px;
+  border-radius:3px;
+  background:var(--blue);
+  color:var(--navy);
+  font-size:11px;
+  font-weight:700;
+}
+.guide-article__title{font-size:22px;font-weight:700;line-height:1.5;color:var(--navy)}
+.guide-article__lead{margin-top:10px;font-size:13px;line-height:1.9;color:var(--muted)}
+.guide-article__meta{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:11.5px;color:var(--muted)}
+.guide-article__body{margin-top:18px}
+
+/* FAQ（Bootstrap accordion をテーマに合わせる） */
+.guide-faq{--bs-accordion-border-color:var(--line);--bs-accordion-border-radius:var(--radius)}
+.guide-faq .accordion-item{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.guide-faq .accordion-item + .accordion-item{margin-top:8px}
+.guide-faq .accordion-button{
+  padding:13px 15px;
+  background:var(--white);
+  font-size:12.5px;
+  font-weight:700;
+  color:var(--navy);
+  box-shadow:none;
+}
+.guide-faq .accordion-button:not(.collapsed){background:var(--blue);color:var(--navy)}
+.guide-faq .accordion-button:focus{border-color:var(--line);box-shadow:0 0 0 3px rgba(30,123,239,.16)}
+.guide-faq .accordion-button::after{width:14px;height:14px;background-size:14px}
+.guide-faq .accordion-body{padding:13px 15px;font-size:12.5px;line-height:1.85;color:var(--ink)}
+
+/* --------------------------------------------------------------------------
+   5. 前後のガイド
+   -------------------------------------------------------------------------- */
+.guide-nav-bottom{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px;
+  margin-top:24px;
+  padding-top:20px;
+  border-top:1px solid var(--line);
+}
+.guide-nav-bottom__item{
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  padding:12px 15px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--white);
+  transition:border-color .16s var(--ease),box-shadow .16s var(--ease);
+}
+.guide-nav-bottom__item:hover{border-color:var(--line-strong)}
+.guide-nav-bottom__item--next{text-align:right}
+.guide-nav-bottom__item:only-child{grid-column:1 / -1}
+.guide-nav-bottom__dir{font-size:11px;font-weight:700;color:var(--cta)}
+.guide-nav-bottom__title{font-size:12.5px;font-weight:600;color:var(--ink)}
+
+/* --------------------------------------------------------------------------
+   6. レスポンシブ
+   -------------------------------------------------------------------------- */
+@media (max-width:991.98px){
+  .guide-article{padding:16px 15px 20px}
+  .guide-article__title{font-size:19px}
+}
+
+@media (max-width:575.98px){
+  .guide-nav-bottom{grid-template-columns:1fr}
+  .guide-nav-bottom__item--next{text-align:left}
+  .guide-article__title{font-size:18px}
+  .guide-article__lead{font-size:12.5px}
+}
