@@ -404,7 +404,9 @@ function woocommerce_cooder_init()
                     "&deliverycountry=" . $ShipCountry .
                     "&sid=" . $cooderSid;
 
-var_dump( $process_button_string );exit;
+                    $card_info = $order->get_payment_card_info();
+                    var_dump( $card_info );exit;
+                    var_dump( $process_button_string );exit;
 
 
                 // Build the HTTP request   $this->api_url

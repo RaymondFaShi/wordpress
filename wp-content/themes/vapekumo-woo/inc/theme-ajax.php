@@ -144,7 +144,7 @@ function vk_register_rest_routes() {
 				'city'       => array( 'type' => 'string', 'required' => true, 'sanitize_callback' => 'sanitize_text_field' ),
 				'address_1'  => array( 'type' => 'string', 'required' => true, 'sanitize_callback' => 'sanitize_text_field' ),
 				'address_2'  => array( 'type' => 'string', 'default' => '', 'sanitize_callback' => 'sanitize_text_field' ),
-				'phone'      => array( 'type' => 'string', 'default' => '', 'sanitize_callback' => 'sanitize_text_field' ),
+				'phone'      => array( 'type' => 'string', 'required' => true, 'sanitize_callback' => 'sanitize_text_field' ),
 				'default'    => array( 'type' => 'boolean', 'default' => false ),
 			),
 		)
@@ -223,7 +223,7 @@ function vk_rest_save_member_address( WP_REST_Request $request ) {
 		'phone'      => $request->get_param( 'phone' ),
 		'default'    => (bool) $request->get_param( 'default' ),
 	);
-	if ( '' === $data['last_name'] || '' === $data['first_name'] || '' === $data['postcode'] || '' === $data['state'] || '' === $data['city'] || '' === $data['address_1'] ) {
+	if ( '' === $data['last_name'] || '' === $data['first_name'] || '' === $data['postcode'] || '' === $data['state'] || '' === $data['city'] || '' === $data['address_1'] || '' === $data['phone'] ) {
 		return new WP_Error( 'vk_address_required', '必須項目を入力してください。', array( 'status' => 422 ) );
 	}
 	$result = vk_upsert_member_address( get_current_user_id(), $type, $data );

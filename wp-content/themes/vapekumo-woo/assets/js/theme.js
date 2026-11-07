@@ -981,6 +981,18 @@
     }
   };
 
+  function initWooAddressStateSelect(modalElement, form) {
+    var $state = $(form).find('select.state_select').first();
+    if (!$state.length) {
+      return;
+    }
+    if ($state.hasClass('select2-hidden-accessible')) {
+      $state.trigger('change.select2');
+      return;
+    }
+    $(document.body).trigger('country_to_state_changed');
+  }
+
   var MemberAddresses = {
     init: function () {
       var modalElement = document.getElementById('addrModal');
@@ -989,6 +1001,9 @@
       }
       var modal = window.bootstrap.Modal.getOrCreateInstance(modalElement);
       var form = document.getElementById('addrManagerForm');
+      $(modalElement).on('shown.bs.modal', function () {
+        initWooAddressStateSelect(modalElement, form);
+      });
       $(document).on('click', '.js-addr-add', function () {
         form.reset();
         form.querySelector('#addrId').value = '';
@@ -1049,52 +1064,135 @@
       this.billingPanel = $('[data-billing-panel]');
       this.billSame = $('[data-bill-same]');
       this.billingFields = $('.woocommerce-billing-fields__field-wrapper');
-      this.apply(this.selected('shipping'));
-      this.different.on('change', function () {
-        this.billingPanel.prop('hidden', !this.different.is(':checked'));
-        this.billSame.toggle(!this.different.is(':checked'));
-        this.billingFields.toggle(this.different.is(':checked'));
-        if (!this.different.is(':checked')) {
-          this.copy('shipping', 'billing');
-        } else {
-          this.apply(this.selected('billing'), 'billing');
-        }
-      }.bind(this));
+      this.shippingId = $('#vkShippingAddressId');
+      this.billingId = $('#vkBillingAddressId');
+      this.billingSame = $('#vkBillingSameAsShipping');
+      this.bind();
+      $('#ship-to-different-address-checkbox').prop('checked', true);
+      this.syncInitialState();
+    },
+    bind: function () {
+      var self = this;
       $(document).on('change', 'input[name="vk_saved_shipping"]', function () {
-        var address = {};
-        try {
-          address = JSON.parse(this.getAttribute('data-address') || '{}');
-        } catch (error) {
-          return;
-        }
-        $('input[name="vk_saved_shipping"]').closest('.addr').removeClass('is-selected');
-        $(this).closest('.addr').addClass('is-selected');
+        self.selectAddress('shipping', this);
+      });
+      $(document).on('change', 'input[name="vk_saved_billing"]', function () {
+        self.selectAddress('billing', this);
+      });
+      this.different.on('change', function () {
+        self.syncBillingMode();
+      });
+      $(document.body).on('updated_checkout', function () {
+        self.syncSelectedAddresses();
+      });
+      $('form.checkout').on('checkout_place_order', function () {
+        self.syncSubmissionState();
+        return true;
+      });
+    },
+    syncInitialState: function () {
+      var shipping = this.selected('shipping');
+      if (!shipping) {
+        this.selectPreferred('shipping');
+      }
+      this.syncSelectedAddresses();
+      this.syncBillingMode();
+      this.billingFields.toggle(this.different.is(':checked'));
+    },
+    syncSelectedAddresses: function () {
+      this.apply(this.selected('shipping'), 'shipping');
+      if (this.different.is(':checked')) {
+        this.ensureBillingSelection();
+        this.apply(this.selected('billing'), 'billing');
+      } else {
+        this.copy('shipping', 'billing');
+      }
+    },
+    syncBillingMode: function () {
+      var different = this.different.is(':checked');
+      this.billingPanel.prop('hidden', !different);
+      this.billSame.prop('hidden', different);
+      this.billingFields.toggle(different);
+      if (different) {
+        this.billingSame.val('0');
+        this.ensureBillingSelection();
+        this.apply(this.selected('billing'), 'billing');
+      } else {
+        this.clearBillingSelection();
+        this.copy('shipping', 'billing');
+      }
+    },
+    selectAddress: function (type, input) {
+      var address = {};
+      try {
+        address = JSON.parse(input.getAttribute('data-address') || '{}');
+      } catch (error) {
+        return;
+      }
+      this.syncCards(type);
+      if (type === 'shipping') {
+        this.shippingId.val(address.id || '');
         this.apply(address, 'shipping');
         if (!this.different.is(':checked')) {
           this.copy('shipping', 'billing');
         }
-      }.bind(this));
-      $(document).on('change', 'input[name="vk_saved_billing"]', function () {
-        var address = {};
-        try {
-          address = JSON.parse(this.getAttribute('data-address') || '{}');
-        } catch (error) {
-          return;
-        }
-        $('input[name="vk_saved_billing"]').closest('.addr').removeClass('is-selected');
-        $(this).closest('.addr').addClass('is-selected');
+      } else {
+        this.billingSame.val(this.different.is(':checked') ? '0' : '1');
+        this.billingId.val(address.id || '');
         this.apply(address, 'billing');
-      }.bind(this));
-      $(document.body).on('updated_checkout', function () {
-        this.apply(this.selected('shipping'));
-        if (this.different.is(':checked')) {
-          this.apply(this.selected('billing'), 'billing');
-        } else {
-          this.copy('shipping', 'billing');
-        }
-      }.bind(this));
-      $('#ship-to-different-address-checkbox').prop('checked', true).trigger('change');
-      this.billingFields.toggle(this.different.is(':checked'));
+      }
+    },
+    selectPreferred: function (type) {
+      var $radios = $('input[name="vk_saved_' + type + '"]');
+      var $preferred = $radios.filter('[data-address-default="1"]').first();
+      if (!$preferred.length) {
+        $preferred = $radios.first();
+      }
+      if (!$preferred.length) {
+        return null;
+      }
+      $radios.prop('checked', false);
+      $preferred.prop('checked', true);
+      this.syncCards(type);
+      return $preferred[0];
+    },
+    ensureBillingSelection: function () {
+      var selected = this.selected('billing');
+      if (selected) {
+        return;
+      }
+      var preferred = this.selectPreferred('billing');
+      if (preferred) {
+        this.selectAddress('billing', preferred);
+      }
+    },
+    clearBillingSelection: function () {
+      $('input[name="vk_saved_billing"]').prop('checked', false);
+      this.syncCards('billing');
+      this.billingSame.val('1');
+      this.billingId.val(this.shippingId.val());
+    },
+    syncCards: function (type) {
+      $('input[name="vk_saved_' + type + '"]').each(function () {
+        var $card = $(this).closest('.addr');
+        $card.toggleClass('is-selected', this.checked);
+      });
+    },
+    syncSubmissionState: function () {
+      var shipping = this.selected('shipping');
+      if (shipping) {
+        this.shippingId.val(shipping.id || '');
+      }
+      if (this.different.is(':checked')) {
+        this.ensureBillingSelection();
+        this.billingSame.val('0');
+        var billing = this.selected('billing');
+        this.billingId.val(billing ? billing.id || '' : '');
+      } else {
+        this.billingSame.val('1');
+        this.billingId.val(this.shippingId.val());
+        this.copy('shipping', 'billing');
+      }
     },
     selected: function (type) {
       var checked = document.querySelector('input[name="vk_saved_' + type + '"]:checked');
@@ -1111,6 +1209,11 @@
       type = type || 'shipping';
       if (!address) {
         return;
+      }
+      if (type === 'shipping') {
+        this.shippingId.val(address.id || '');
+      } else {
+        this.billingId.val(address.id || '');
       }
       var fields = {
         first_name: address.first_name || '',
@@ -1142,6 +1245,10 @@
         $('#' + to + '_' + key).val($('#' + from + '_' + key).val());
       });
       $('#' + to + '_country').val('JP');
+      if ('billing' === to) {
+        this.billingSame.val('1');
+        this.billingId.val(this.shippingId.val());
+      }
     }
   };
 
@@ -1156,6 +1263,9 @@
       var title = document.getElementById('vkCheckoutAddressModalTitle');
       var error = form.querySelector('[data-vk-address-error]');
       var submit = form.querySelector('[type="submit"]');
+      $(modalElement).on('shown.bs.modal', function () {
+        initWooAddressStateSelect(modalElement, form);
+      });
 
       $(document).on('click', '.js-checkout-address-add', function () {
         form.reset();

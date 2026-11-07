@@ -155,14 +155,14 @@ $order_button    = apply_filters( 'woocommerce_order_button_text', __( '注文�
 					<input type="hidden" name="type" id="vkCheckoutAddressType" value="shipping">
 					<input type="hidden" name="id" id="vkCheckoutAddressId" value="">
 					<div class="form-grid">
-						<div class="field"><label class="field__label" for="vkCheckoutAddressLastName">姓</label><input class="field__input" id="vkCheckoutAddressLastName" name="last_name" autocomplete="family-name" required></div>
-						<div class="field"><label class="field__label" for="vkCheckoutAddressFirstName">名</label><input class="field__input" id="vkCheckoutAddressFirstName" name="first_name" autocomplete="given-name" required></div>
-						<div class="field"><label class="field__label" for="vkCheckoutAddressPostcode">郵便番号</label><input class="field__input" id="vkCheckoutAddressPostcode" name="postcode" inputmode="numeric" autocomplete="postal-code" required></div>
-						<div class="field"><label class="field__label" for="vkCheckoutAddressState">都道府県</label><select class="field__select" id="vkCheckoutAddressState" name="state" required><?php foreach ( (array) WC()->countries->get_states( 'JP' ) as $state_code => $state_name ) : ?><option value="<?php echo esc_attr( $state_code ); ?>"><?php echo esc_html( $state_name ); ?></option><?php endforeach; ?></select></div>
-						<div class="field form-grid__full"><label class="field__label" for="vkCheckoutAddressCity">市区町村</label><input class="field__input" id="vkCheckoutAddressCity" name="city" autocomplete="address-level2" required></div>
-						<div class="field form-grid__full"><label class="field__label" for="vkCheckoutAddressLine1">住所</label><input class="field__input" id="vkCheckoutAddressLine1" name="address_1" autocomplete="address-line1" required></div>
+						<div class="field"><label class="field__label" for="vkCheckoutAddressLastName">姓<span class="field__req" aria-hidden="true">必須</span></label><input class="field__input" id="vkCheckoutAddressLastName" name="last_name" autocomplete="family-name" required></div>
+						<div class="field"><label class="field__label" for="vkCheckoutAddressFirstName">名<span class="field__req" aria-hidden="true">必須</span></label><input class="field__input" id="vkCheckoutAddressFirstName" name="first_name" autocomplete="given-name" required></div>
+						<div class="field"><label class="field__label" for="vkCheckoutAddressPostcode">郵便番号<span class="field__req" aria-hidden="true">必須</span></label><input class="field__input" id="vkCheckoutAddressPostcode" name="postcode" inputmode="numeric" autocomplete="postal-code" required></div>
+						<?php vk_render_japanese_state_field( 'state', 'vkCheckoutAddressState', 'field', 'field__label', 'field__select' ); ?>
+						<div class="field form-grid__full"><label class="field__label" for="vkCheckoutAddressCity">市区町村<span class="field__req" aria-hidden="true">必須</span></label><input class="field__input" id="vkCheckoutAddressCity" name="city" autocomplete="address-level2" required></div>
+						<div class="field form-grid__full"><label class="field__label" for="vkCheckoutAddressLine1">住所<span class="field__req" aria-hidden="true">必須</span></label><input class="field__input" id="vkCheckoutAddressLine1" name="address_1" autocomplete="address-line1" required></div>
 						<div class="field form-grid__full"><label class="field__label" for="vkCheckoutAddressLine2">建物名・部屋番号</label><input class="field__input" id="vkCheckoutAddressLine2" name="address_2" autocomplete="address-line2"></div>
-						<div class="field form-grid__full"><label class="field__label" for="vkCheckoutAddressPhone">電話番号</label><input class="field__input" id="vkCheckoutAddressPhone" name="phone" type="tel" autocomplete="tel"></div>
+						<div class="field form-grid__full"><label class="field__label" for="vkCheckoutAddressPhone">電話番号<span class="field__req" aria-hidden="true">必須</span></label><input class="field__input" id="vkCheckoutAddressPhone" name="phone" type="tel" autocomplete="tel" required></div>
 					</div>
 					<label class="check" for="vkCheckoutAddressDefault"><input type="checkbox" id="vkCheckoutAddressDefault" name="default" value="1"><span>この住所を既定の住所にする</span></label>
 					<p class="field__error" data-vk-address-error role="alert" hidden></p>

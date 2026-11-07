@@ -193,16 +193,38 @@ function vk_handle_member_address_action() {
 		}
 		unset( $address );
 	} else {
+		$required_values = array(
+			'姓'                   => sanitize_text_field( wp_unslash( $_POST['address_last_name'] ?? '' ) ),
+			'名'                   => sanitize_text_field( wp_unslash( $_POST['address_first_name'] ?? '' ) ),
+			'郵便番号'             => sanitize_text_field( wp_unslash( $_POST['address_postcode'] ?? '' ) ),
+			'都道府県'             => sanitize_text_field( wp_unslash( $_POST['address_state'] ?? '' ) ),
+			'市区町村'             => sanitize_text_field( wp_unslash( $_POST['address_city'] ?? '' ) ),
+			'住所'                 => sanitize_text_field( wp_unslash( $_POST['address_line1'] ?? '' ) ),
+			'電話番号'             => sanitize_text_field( wp_unslash( $_POST['address_phone'] ?? '' ) ),
+		);
+		$missing = array_keys(
+			array_filter(
+				$required_values,
+				static function ( $value ) {
+					return '' === $value;
+				}
+			)
+		);
+		if ( $missing ) {
+			wc_add_notice( implode( '、', $missing ) . 'を入力してください。', 'error' );
+			wp_safe_redirect( vk_account_url( 'edit-address' ) );
+			exit;
+		}
 		$address = array(
 			'id'         => $address_id ?: wp_generate_uuid4(),
-			'first_name' => sanitize_text_field( wp_unslash( $_POST['address_first_name'] ?? '' ) ),
-			'last_name'  => sanitize_text_field( wp_unslash( $_POST['address_last_name'] ?? '' ) ),
-			'postcode'   => sanitize_text_field( wp_unslash( $_POST['address_postcode'] ?? '' ) ),
-			'state'      => sanitize_text_field( wp_unslash( $_POST['address_state'] ?? '' ) ),
-			'city'       => sanitize_text_field( wp_unslash( $_POST['address_city'] ?? '' ) ),
-			'address_1'  => sanitize_text_field( wp_unslash( $_POST['address_line1'] ?? '' ) ),
+			'first_name' => $required_values['名'],
+			'last_name'  => $required_values['姓'],
+			'postcode'   => $required_values['郵便番号'],
+			'state'      => $required_values['都道府県'],
+			'city'       => $required_values['市区町村'],
+			'address_1'  => $required_values['住所'],
 			'address_2'  => sanitize_text_field( wp_unslash( $_POST['address_line2'] ?? '' ) ),
-			'phone'      => sanitize_text_field( wp_unslash( $_POST['address_phone'] ?? '' ) ),
+			'phone'      => $required_values['電話番号'],
 			'country'    => 'JP',
 			'default'    => ! empty( $_POST['address_default'] ) || ! $addresses,
 		);
@@ -304,12 +326,12 @@ function vk_render_edit_address_content() {
 						<div class="u-form-grid">
 							<div class="afield"><label class="afield__label" for="addrLastName">姓<span class="afield__req">必須</span></label><input class="afield__input" id="addrLastName" name="address_last_name" type="text" autocomplete="family-name" placeholder="山田" required></div>
 							<div class="afield"><label class="afield__label" for="addrFirstName">名<span class="afield__req">必須</span></label><input class="afield__input" id="addrFirstName" name="address_first_name" type="text" autocomplete="given-name" placeholder="太郎" required></div>
-							<div class="afield"><label class="afield__label" for="addrPostcode">郵便番号</label><input class="afield__input" id="addrPostcode" name="address_postcode" type="text" inputmode="numeric" required></div>
-							<div class="afield"><label class="afield__label" for="addrState">都道府県</label><select class="afield__select" id="addrState" name="address_state" required><?php foreach ( (array) WC()->countries->get_states( 'JP' ) as $state_code => $state_name ) : ?><option value="<?php echo esc_attr( $state_code ); ?>"><?php echo esc_html( $state_name ); ?></option><?php endforeach; ?></select></div>
-							<div class="afield"><label class="afield__label" for="addrCity">市区町村</label><input class="afield__input" id="addrCity" name="address_city" type="text" required></div>
-							<div class="afield u-form-grid--full"><label class="afield__label" for="addrLine1">住所</label><input class="afield__input" id="addrLine1" name="address_line1" type="text" required></div>
+							<div class="afield"><label class="afield__label" for="addrPostcode">郵便番号<span class="afield__req">必須</span></label><input class="afield__input" id="addrPostcode" name="address_postcode" type="text" inputmode="numeric" required></div>
+							<?php vk_render_japanese_state_field( 'address_state', 'addrState', 'afield', 'afield__label', 'afield__select' ); ?>
+							<div class="afield"><label class="afield__label" for="addrCity">市区町村<span class="afield__req">必須</span></label><input class="afield__input" id="addrCity" name="address_city" type="text" required></div>
+							<div class="afield u-form-grid--full"><label class="afield__label" for="addrLine1">住所<span class="afield__req">必須</span></label><input class="afield__input" id="addrLine1" name="address_line1" type="text" required></div>
 							<div class="afield u-form-grid--full"><label class="afield__label" for="addrLine2">建物名・部屋番号</label><input class="afield__input" id="addrLine2" name="address_line2" type="text"></div>
-							<div class="afield u-form-grid--full"><label class="afield__label" for="addrPhone">電話番号</label><input class="afield__input" id="addrPhone" name="address_phone" type="tel"></div>
+							<div class="afield u-form-grid--full"><label class="afield__label" for="addrPhone">電話番号<span class="afield__req">必須</span></label><input class="afield__input" id="addrPhone" name="address_phone" type="tel" required></div>
 							<label class="auth-check u-form-grid--full" for="addrDefault"><input type="checkbox" id="addrDefault" name="address_default" value="1"><span>この住所を既定の住所にする</span></label>
 						</div>
 					</div>
