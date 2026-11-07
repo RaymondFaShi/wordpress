@@ -1,0 +1,3788 @@
+<?php
+
+namespace FluentCrm\App\Services;
+
+use FluentCrm\App\Models\Campaign;
+use FluentCrm\App\Models\Lists;
+use FluentCrm\App\Models\Subscriber;
+use FluentCrm\App\Models\SubscriberMeta;
+use FluentCrm\App\Models\SubscriberPivot;
+use FluentCrm\App\Models\SystemLog;
+use FluentCrm\App\Models\Tag;
+use FluentCrm\App\Models\Template;
+use FluentCrm\App\Models\UrlStores;
+use FluentCrm\App\Models\Webhook;
+use FluentCrm\App\Services\BlockRender\BlockEditorHelper;
+use FluentCrm\Framework\Http\Request\Request;
+use FluentCrm\Framework\Support\Arr;
+use FluentCrm\Framework\Support\Str;
+
+class Helper
+{
+    const DEFAULT_CAMPAIGN_TEMPLATE_OPTION = 'default_campaign_template_id';
+    const MIGRATION_FLAGS_OPTION = '_fc_migration_flags';
+
+    public static function getMigrationFlag($flag, $default = '')
+    {
+        $flags = fluentcrm_get_option(self::MIGRATION_FLAGS_OPTION, []);
+
+        return is_array($flags) ? ($flags[$flag] ?? $default) : $default;
+    }
+
+    public static function setMigrationFlag($flag, $value)
+    {
+        if (!$flag) {
+            return;
+        }
+
+        $flags = fluentcrm_get_option(self::MIGRATION_FLAGS_OPTION, []);
+        $flags = is_array($flags) ? $flags : [];
+        $flags[$flag] = $value;
+
+        fluentcrm_update_option(self::MIGRATION_FLAGS_OPTION, $flags);
+    }
+
+    /**
+     * Whether EDD 3+ is active; the integration needs the EDD 3 order APIs and tables.
+     *
+     * @return bool
+     */
+    public static function isEdd3()
+    {
+        return class_exists('\Easy_Digital_Downloads')
+            && defined('EDD_VERSION')
+            && version_compare(EDD_VERSION, '3.0', '>=');
+    }
+
+    /**
+     * Parse an array or JSON string into an array, retrying JSON with wp_unslash().
+     *
+     * @param mixed $value Input value from request/body.
+     * @param array $default Fallback value when parsing fails.
+     * @return array
+     */
+    public static function parseArrayOrJson($value, $default = [])
+    {
+        if (!is_string($value)) {
+            return is_array($value) ? $value : $default;
+        }
+
+        $payloads = [$value];
+        $unslashed = wp_unslash($value);
+        if ($unslashed !== $value) {
+            $payloads[] = $unslashed;
+        }
+
+        foreach ($payloads as $payload) {
+            $decoded = json_decode($payload, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        return $default;
+    }
+
+    /**
+     * Normalize a request sort column or direction to a single identifier orderBy() accepts.
+     *
+     * @param mixed $value Raw request value; arrays, objects and null are rejected.
+     * @param string $default Column or direction to use when $value is unusable.
+     * @return string
+     */
+    public static function sanitizeOrderBy($value, $default = 'id')
+    {
+        if (!is_scalar($value)) {
+            return $default;
+        }
+
+        $value = trim((string)$value);
+        if ($value === '') {
+            return $default;
+        }
+
+        $sanitized = sanitize_sql_orderby($value);
+
+        // sanitize_sql_orderby() accepts whole clauses ('id DESC'); orderBy() throws on them.
+        if (!is_string($sanitized) || !preg_match('/^[a-zA-Z0-9_\.]+$/', $sanitized)) {
+            return $default;
+        }
+
+        return $sanitized;
+    }
+
+    /**
+     * The contact that test emails, previews and test webhooks render for when none is chosen.
+     *
+     * Prefer the current user's linked contact, then an email match allowed by the verification policy.
+     * Otherwise always use the same fallback: the oldest contact.
+     * Shared by REST and MCP so both pick the same contact.
+     *
+     * @return Subscriber|null
+     */
+    public static function getSampleContact()
+    {
+        $user = wp_get_current_user();
+        if ($user && $user->ID) {
+            $own = Subscriber::where('user_id', $user->ID)->first();
+            if ($own) {
+                return $own;
+            }
+
+            if (self::isUserEmailVerified($user)) {
+                $own = Subscriber::where('email', $user->user_email)->first();
+                if ($own) {
+                    return $own;
+                }
+            }
+        }
+
+        return Subscriber::orderBy('id', 'ASC')->first();
+    }
+
+    /**
+     * maybe_unserialize() without object instantiation; use for user-influenced values.
+     *
+     * @param mixed $value The (possibly serialized) value read from storage.
+     * @return mixed stdClass is kept (it has no magic methods, and settings store it for empty
+     *               JSON objects); any other class becomes an inert incomplete class.
+     */
+    public static function safeUnserialize($value)
+    {
+        if (is_serialized($value)) {
+            return @unserialize(trim($value), ['allowed_classes' => ['stdClass']]);
+        }
+
+        return $value;
+    }
+
+    public static function getLinksFromString($string)
+    {
+        preg_match_all('/<a[^>]+(href\=["|\'](http.*?)["|\'])/m', $string, $urls);
+
+        if (!empty($urls[2])) {
+            return $urls[2];
+        }
+
+        return [];
+    }
+
+    public static function urlReplaces($string)
+    {
+        preg_match_all('/<a[^>]+(href=["\'](http[^"\']*)["\'])/m', $string, $urls);
+        $replaces = $urls[1];
+        $urls = $urls[2];
+
+        $urls = array_map(function ($url) {
+            return str_replace('|', '%7C', $url);
+        }, $urls);
+
+        $formatted = [];
+        $baseUrl = self::getSiteUrl();
+
+        foreach ($urls as $index => $url) {
+            $urlSlug = UrlStores::getUrlSlug($url);
+            if (!$urlSlug) {
+                continue;
+            }
+            $formatted[$replaces[$index]] = add_query_arg([
+                'ns_url' => $urlSlug
+            ], $baseUrl);
+        }
+        return $formatted;
+    }
+
+    public static function attachUrls($html, $campaignUrls, $insertId, $hash = false)
+    {
+        $hasSmartUrl = strpos($html, 'smart_url') !== false;
+
+        foreach ($campaignUrls as $src => $url) {
+            $url .= '&mid=' . $insertId;
+            if ($hash) {
+                $url .= '&fch=' . substr($hash, 0, 8);
+            }
+
+            if ($hasSmartUrl && strpos($src, 'smart_url') !== false) {
+                $url .= '&signed_hash=' . rawurlencode(self::signSmartUrlHash($hash));
+            }
+
+            $campaignUrls[$src] = 'href="' . $url . '"';
+        }
+        return str_replace(array_keys($campaignUrls), array_values($campaignUrls), $html);
+    }
+
+    public static function attachAnonymousUrls($html, $campaignUrls, $insertId, $hash = false)
+    {
+        $hasSmartUrl = strpos($html, 'smart_url') !== false;
+        foreach ($campaignUrls as $src => $url) {
+            $url .= '&mid=' . $insertId . '&ano=1';
+            if ($hash) {
+                $url .= '&fch=' . substr($hash, 0, 8);
+            }
+
+            if ($hasSmartUrl && strpos($src, 'smart_url') !== false) {
+                $url .= '&signed_hash=' . rawurlencode(self::signSmartUrlHash($hash));
+            }
+
+            $campaignUrls[$src] = 'href="' . $url . '"';
+        }
+
+        return str_replace(array_keys($campaignUrls), array_values($campaignUrls), $html);
+    }
+
+    /**
+     * HMAC-sign an email hash for smart URLs. Rotating the auth salt revokes existing signatures.
+     *
+     * @param string $hash The email hash to sign.
+     * @return string
+     */
+    public static function signSmartUrlHash($hash)
+    {
+        return hash_hmac('sha256', $hash, wp_salt('auth'));
+    }
+
+    /**
+     * Verify a smart URL signed hash (HMAC, or legacy bcrypt in older emails).
+     *
+     * @param string $emailHash The campaign email hash.
+     * @param string $signedHash The signed hash from the URL.
+     * @return bool
+     */
+    public static function verifySmartUrlHash($emailHash, $signedHash)
+    {
+        $expected = self::signSmartUrlHash($emailHash);
+        if (hash_equals($expected, $signedHash)) {
+            return true;
+        }
+
+        return wp_check_password($emailHash, $signedHash);
+    }
+
+    public static function generateEmailHash($insertId = null)
+    {
+        return wp_generate_uuid4();
+    }
+
+    /**
+     * Resolved managed hashes for this process, keyed by contact id.
+     */
+    private static $managedHashes = [];
+
+    /**
+     * Contact ids announced by primeManagedHashes() but not resolved yet.
+     */
+    private static $pendingManagedHashes = [];
+
+    /**
+     * Queue a batch's contact ids so the first getManagedHash() resolves them all at once.
+     * Runs no query. Replaces the queued set; callers clear it with clearPendingManagedHashes().
+     *
+     * @param array|\FluentCrm\Framework\Support\Collection $contactIds
+     * @return void
+     */
+    public static function primeManagedHashes($contactIds)
+    {
+        self::$pendingManagedHashes = [];
+
+        foreach ($contactIds as $contactId) {
+            $contactId = (int)$contactId;
+
+            if (!$contactId || isset(self::$managedHashes[$contactId])) {
+                continue;
+            }
+
+            self::$pendingManagedHashes[$contactId] = true;
+        }
+    }
+
+    /**
+     * Discard queued-but-unresolved ids at the end of a batch. Resolved hashes stay cached.
+     *
+     * @return void
+     */
+    public static function clearPendingManagedHashes()
+    {
+        self::$pendingManagedHashes = [];
+    }
+
+    /**
+     * The contact's managed hash, creating one if missing.
+     * It authenticates unsubscribe links and rotates only on a WordPress password change.
+     *
+     * @param int $contactId
+     * @return string
+     */
+    public static function getManagedHash($contactId)
+    {
+        $contactId = (int)$contactId;
+
+        if (isset(self::$managedHashes[$contactId])) {
+            return self::$managedHashes[$contactId];
+        }
+
+        self::resolveManagedHashes(array_merge(array_keys(self::$pendingManagedHashes), [$contactId]));
+
+        return isset(self::$managedHashes[$contactId]) ? self::$managedHashes[$contactId] : '';
+    }
+
+    /**
+     * Read the stored hashes for $contactIds and create the missing ones.
+     * A duplicate row from a race is harmless; hashes are looked up by value.
+     *
+     * @param array $contactIds
+     * @return void
+     */
+    private static function resolveManagedHashes($contactIds)
+    {
+        $contactIds = array_values(array_unique(array_filter(array_map('intval', $contactIds))));
+
+        self::$pendingManagedHashes = [];
+
+        $contactIds = array_values(array_filter($contactIds, function ($contactId) {
+            return !isset(self::$managedHashes[$contactId]);
+        }));
+
+        if (!$contactIds) {
+            return;
+        }
+
+        $existing = SubscriberMeta::where('key', '_secure_managed_hash')
+            ->whereIn('subscriber_id', $contactIds)
+            ->get();
+
+        foreach ($existing as $meta) {
+            self::$managedHashes[(int)$meta->subscriber_id] = $meta->value;
+        }
+
+        $now = current_time('mysql');
+        $newRows = [];
+
+        foreach ($contactIds as $contactId) {
+            if (isset(self::$managedHashes[$contactId])) {
+                continue;
+            }
+
+            $hash = md5(wp_generate_uuid4() . '_' . $contactId . '_' . '_' . time()) . '__' . $contactId;
+
+            $newRows[] = [
+                'subscriber_id' => $contactId,
+                'created_by'    => 0,
+                'key'           => '_secure_managed_hash',
+                'object_type'   => 'option',
+                'value'         => $hash,
+                'created_at'    => $now,
+                'updated_at'    => $now
+            ];
+
+            self::$managedHashes[$contactId] = $hash;
+        }
+
+        if ($newRows) {
+            SubscriberMeta::insert($newRows);
+        }
+    }
+
+    /**
+     * Add the open-tracking pixel to an email.
+     *
+     * $campaignTracking is the campaign's own open-tracking setting (true, false or 'anonymous').
+     * It can switch tracking off or to anonymous, but not on when the global setting is off,
+     * the same rule click tracking follows.
+     */
+    public static function injectTrackerPixel($emailBody, $hash, $emailId = null, $campaignTracking = null)
+    {
+        if (!$hash) {
+            return $emailBody;
+        }
+
+        $trackingType = fluentcrmTrackEmailOpen();
+        if ($trackingType && $campaignTracking !== null) {
+            $trackingType = $campaignTracking;
+        }
+
+        if (!$trackingType) {
+            return $emailBody;
+        }
+
+        $args = [
+            FLUENTCRM_EXTERNAL_URL_PARAM => 1,
+            'route'                      => 'open',
+            '_e_hash'                    => $hash,
+            '_e_id'                      => $emailId
+        ];
+
+        if ($trackingType === 'anonymous') {
+            $args['ano'] = 1;
+        }
+
+        $trackImageUrl = add_query_arg($args, self::getSiteUrl());
+        $trackPixelHtml = '<img src="' . esc_url($trackImageUrl) . '" alt="" width="1" height="1" border="0" style="display:block;width:1px;height:1px;border:0;outline:none;" />';
+
+        if (strpos($emailBody, '{fluent_track_pixel}') !== false) {
+            $emailBody = str_replace('{fluent_track_pixel}', $trackPixelHtml, $emailBody);
+        } elseif (stripos($emailBody, '</body>') !== false) {
+            $emailBody = preg_replace('#</body>#i', $trackPixelHtml . '$0', $emailBody, 1);
+        } else {
+            // Fragments without a body tag (raw_html templates) get the pixel appended.
+            $emailBody .= $trackPixelHtml;
+        }
+
+        return $emailBody;
+    }
+
+    public static function getProfileSections()
+    {
+        $sections = [
+            'subscriber'        => [
+                'name'    => 'subscriber',
+                'title'   => __('Overview', 'fluent-crm'),
+                'handler' => 'route'
+            ],
+            'subscriber_emails' => [
+                'name'    => 'subscriber_emails',
+                'title'   => __('Emails', 'fluent-crm'),
+                'handler' => 'route'
+            ],
+        ];
+
+        if (self::getPurchaseHistoryProviders()) {
+            $sections['subscriber_purchases'] = [
+                'name'    => 'subscriber_purchases',
+                'title'   => __('Purchases', 'fluent-crm'),
+                'handler' => 'route'
+            ];
+        }
+
+        if (defined('FLUENTFORM')) {
+            $sections['subscriber_form_submissions'] = [
+                'name'    => 'subscriber_form_submissions',
+                'title'   => __('Forms', 'fluent-crm'),
+                'handler' => 'route'
+            ];
+        }
+
+        /**
+         * Filter the list of support ticket providers.
+         *
+         * This filter allows you to modify the array of support ticket providers used in FluentCRM.
+         *
+         * @param array An array of support ticket providers.
+         * @since 2.5.1
+         *
+         */
+        $supportProviders = apply_filters('fluentcrm-support_tickets_providers', []);
+        if ($supportProviders) {
+            $sections['subscriber_support_tickets'] = [
+                'name'    => 'subscriber_support_tickets',
+                'title'   => __('Tickets', 'fluent-crm'),
+                'handler' => 'route'
+            ];
+        }
+
+        $sections['subscriber_notes'] = [
+            'name'    => 'subscriber_notes',
+            'title'   => __('Notes', 'fluent-crm'),
+            'handler' => 'route'
+        ];
+
+        /**
+         * Filter the contact profile sections in FluentCRM.
+         *
+         * This filter allows modification of the contact profile sections array in FluentCRM.
+         *
+         * @param array $sections An array of profile sections.
+         * @since 2.2.0
+         *
+         */
+        return apply_filters('fluentcrm_profile_sections', $sections);
+    }
+
+    public static function getDefaultEmailTemplate()
+    {
+        /**
+         * Filter the default email design template.
+         *
+         * This filter allows you to modify the default email design template used by FluentCRM.
+         *
+         * @param string The default email design template. Default 'simple'.
+         * @since 2.7.0
+         *
+         */
+        return apply_filters('fluent_crm/default_email_design_template', 'simple');
+    }
+
+    public static function getDefaultCampaignTemplateId()
+    {
+        return absint(fluentcrm_get_option(self::DEFAULT_CAMPAIGN_TEMPLATE_OPTION, 0));
+    }
+
+    public static function getDefaultCampaignTemplate()
+    {
+        $templateId = self::getDefaultCampaignTemplateId();
+
+        if (!$templateId) {
+            return null;
+        }
+
+        $template = Template::emailTemplates(['publish', 'draft'])->find($templateId);
+
+        return $template ?: null;
+    }
+
+    public static function setDefaultCampaignTemplateId($templateId)
+    {
+        $templateId = absint($templateId);
+
+        if (!$templateId) {
+            return null;
+        }
+
+        $template = Template::emailTemplates(['publish', 'draft'])->find($templateId);
+
+        if (!$template) {
+            return null;
+        }
+
+        fluentcrm_update_option(self::DEFAULT_CAMPAIGN_TEMPLATE_OPTION, $templateId);
+
+        return $template;
+    }
+
+    public static function clearDefaultCampaignTemplateId()
+    {
+        return (bool) fluentcrm_delete_option(self::DEFAULT_CAMPAIGN_TEMPLATE_OPTION);
+    }
+
+    /**
+     * Copy an email template's content, design and settings onto a campaign and save it.
+     *
+     * @param Campaign $campaign The campaign to apply the template to (modified and saved).
+     * @param Template $template The source email template.
+     * @return Campaign The saved campaign.
+     */
+    public static function applyTemplateToCampaign(Campaign $campaign, Template $template)
+    {
+        $designTemplate = sanitize_text_field(get_post_meta($template->ID, '_design_template', true));
+
+        if (!$designTemplate) {
+            $designTemplate = self::getDefaultEmailTemplate();
+        }
+
+        $campaign->fill([
+            'template_id'      => absint($template->ID),
+            'email_body'       => $template->post_content ?: '',
+            'email_subject'    => sanitize_text_field(get_post_meta($template->ID, '_email_subject', true)),
+            'email_pre_header' => sanitize_textarea_field($template->post_excerpt ?: ''),
+            'design_template'  => $designTemplate,
+            'settings'         => self::mergeTemplateSettings($campaign->settings, [
+                'template_config' => get_post_meta($template->ID, '_template_config', true),
+                'footer_settings' => get_post_meta($template->ID, '_footer_settings', true)
+            ], $designTemplate)
+        ])->save();
+
+        self::syncVisualBuilderDesign($campaign, $template);
+
+        return $campaign;
+    }
+
+    /**
+     * Copy the template's visual builder design to the campaign, or clear it for other designs.
+     *
+     * @param Campaign $campaign The campaign whose visual builder meta is updated.
+     * @param Template $template The source email template.
+     * @return void
+     */
+    protected static function syncVisualBuilderDesign(Campaign $campaign, Template $template)
+    {
+        $designTemplate = get_post_meta($template->ID, '_design_template', true);
+
+        if ($designTemplate !== 'visual_builder') {
+            fluentcrm_delete_campaign_meta($campaign->id, '_visual_builder_design');
+            return;
+        }
+
+        $design = get_post_meta($template->ID, '_visual_builder_design', true);
+
+        if ($design) {
+            fluentcrm_update_campaign_meta($campaign->id, '_visual_builder_design', $design);
+        }
+    }
+
+    /**
+     * Merge a template's config and footer settings over a campaign's settings.
+     *
+     * @param array|mixed $campaignSettings Non-arrays are treated as empty.
+     * @param array $templateSettings `template_config` and `footer_settings` keys.
+     * @param string $designTemplate The resolved design template slug.
+     * @return array
+     */
+    protected static function mergeTemplateSettings($campaignSettings, $templateSettings, $designTemplate)
+    {
+        $campaignSettings = is_array($campaignSettings) ? $campaignSettings : [];
+
+        $templateConfig = Arr::get($templateSettings, 'template_config', []);
+        $templateConfig = is_array($templateConfig) ? $templateConfig : [];
+        $templateConfig = wp_parse_args(
+            $templateConfig,
+            Arr::get($campaignSettings, 'template_config', self::getTemplateConfig($designTemplate))
+        );
+
+        $footerSettings = Arr::get($templateSettings, 'footer_settings', []);
+        $footerSettings = is_array($footerSettings) ? $footerSettings : [];
+        $footerSettings = wp_parse_args($footerSettings, [
+            'disable_footer'   => 'no',
+            'custom_footer'    => 'no',
+            'footer_content'   => '',
+            'font_size'        => 13,
+            'font_color'       => '#202020',
+            'background_color' => 'transparent',
+            'footer_padding'   => 20
+        ]);
+
+        $footerSettings['disable_footer'] = ($footerSettings['disable_footer'] === 'yes') ? 'yes' : 'no';
+        $footerSettings['custom_footer'] = ($footerSettings['custom_footer'] === 'yes') ? 'yes' : 'no';
+
+        $templateConfig['disable_footer'] = $footerSettings['disable_footer'];
+        $templateConfig['design_template'] = $designTemplate;
+
+        $campaignSettings['template_config'] = $templateConfig;
+        $campaignSettings['footer_settings'] = $footerSettings;
+
+        return $campaignSettings;
+    }
+
+    public static function getGlobalSmartCodes()
+    {
+        $subscriberCodes = [
+            'key'        => 'contact',
+            'title'      => __('Contact', 'fluent-crm'),
+            /**
+             * Filter the smartcodes available for FluentCRM contacts.
+             *
+             * This filter allows modification of the smartcodes that can be used for FluentCRM contacts.
+             *
+             * @param array $smartcodes An associative array of smartcodes and their descriptions.
+             *     Default smartcodes:
+             *     - '{{contact.full_name}}'      => 'Full Name'
+             *     - '{{contact.prefix}}'         => 'Name Prefix'
+             *     - '{{contact.first_name}}'     => 'First Name'
+             *     - '{{contact.last_name}}'      => 'Last Name'
+             *     - '{{contact.email}}'          => 'Contact Email'
+             *     - '{{contact.id}}'             => 'Contact ID'
+             *     - '{{contact.user_id}}'        => 'User ID'
+             *     - '{{contact.address_line_1}}' => 'Address Line 1'
+             *     - '{{contact.address_line_2}}' => 'Address Line 2'
+             *     - '{{contact.city}}'           => 'City'
+             *     - '{{contact.state}}'          => 'State'
+             *     - '{{contact.postal_code}}'    => 'Postal Code'
+             *     - '{{contact.country}}'        => 'Country'
+             *     - '{{contact.phone}}'          => 'Phone Number'
+             *     - '{{contact.status}}'         => 'Status'
+             *     - '{{contact.date_of_birth}}'  => 'Date of Birth'
+             * @since 1.0.0
+             *
+             */
+            'shortcodes' => apply_filters('fluentcrm_contact_smartcodes', [
+                '{{contact.full_name}}'      => __('Full Name', 'fluent-crm'),
+                '{{contact.prefix}}'         => __('Name Prefix', 'fluent-crm'),
+                '{{contact.first_name}}'     => __('First name', 'fluent-crm'),
+                '{{contact.last_name}}'      => __('Last name', 'fluent-crm'),
+                '{{contact.email}}'          => __('Contact Email', 'fluent-crm'),
+                '{{contact.id}}'             => __('Contact ID', 'fluent-crm'),
+                '{{contact.user_id}}'        => __('User ID', 'fluent-crm'),
+                '{{contact.address_line_1}}' => __('Address Line 1', 'fluent-crm'),
+                '{{contact.address_line_2}}' => __('Address Line 2', 'fluent-crm'),
+                '{{contact.city}}'           => __('City', 'fluent-crm'),
+                '{{contact.state}}'          => __('State', 'fluent-crm'),
+                '{{contact.postal_code}}'    => __('Postal code', 'fluent-crm'),
+                '{{contact.country}}'        => __('Country', 'fluent-crm'),
+                '{{contact.phone}}'          => __('Phone number', 'fluent-crm'),
+                '{{contact.status}}'         => __('Status', 'fluent-crm'),
+                '{{contact.date_of_birth}}'  => __('Date of Birth', 'fluent-crm')
+            ])
+        ];
+
+        if (self::isCompanyEnabled()) {
+            $subscriberCodes['shortcodes']['{{contact.company.name}}'] = __('Company Name', 'fluent-crm');
+            $subscriberCodes['shortcodes']['{{contact.company.industry}}'] = __('Company industry', 'fluent-crm');
+            $subscriberCodes['shortcodes']['{{contact.company.address}}'] = __('Company Address', 'fluent-crm');
+        }
+
+        $smartCodes[] = $subscriberCodes;
+
+        $customFields = fluentcrm_get_option('contact_custom_fields', []);
+
+        if ($customFields) {
+            $shortcodes = [];
+            foreach ($customFields as $item) {
+                $shortcodes['{{contact.custom.' . $item['slug'] . '}}'] = $item['label'];
+            }
+            $smartCodes[] = [
+                'key'        => 'contact_custom_fields',
+                'title'      => __('Custom fields', 'fluent-crm'),
+                'shortcodes' => $shortcodes
+            ];
+        }
+
+        $smartCodes[] = [
+            'key'        => 'general',
+            'title'      => __('General', 'fluent-crm'),
+            /**
+             * Filter to modify the general smartcodes used in FluentCRM.
+             *
+             * @param array $shortcodes An associative array of smartcodes and their descriptions.
+             *
+             *        Default smartcodes:
+             *        - '{{crm.business_name}}' => 'Business Name'
+             *        - '{{crm.business_address}}' => 'Business Address'
+             *        - '{{wp.admin_email}}' => 'Admin Email'
+             *        - '##wp.url##' => 'Site URL'
+             *        - '{{other.date.+2 days}}' => 'Dynamic Date (ex: +2 days from now)'
+             *        - '{{other.date_format.D, d M, Y}}' => 'Custom Date Format (Any PHP Date Format)'
+             *        - '{{other.latest_post.title}}' => 'Latest Post Title (Published)'
+             *        - '##crm.unsubscribe_url##' => 'Unsubscribe URL'
+             *        - '##crm.manage_subscription_url##' => 'Manage Subscription URL'
+             *        - '##web_preview_url##' => 'View On Browser URL'
+             *        - '{{crm.unsubscribe_html|Unsubscribe}}' => 'Unsubscribe Hyperlink HTML'
+             *        - '{{crm.manage_subscription_html|Manage Preference}}' => 'Manage Subscription Hyperlink HTML'
+             * @since 2.7.0
+             *
+             */
+            'shortcodes' => apply_filters('fluent_crm/general_smartcodes', [
+                '{{crm.business_name}}'                              => __('Business Name', 'fluent-crm'),
+                '{{crm.business_address}}'                           => __('Business Address', 'fluent-crm'),
+                '{{wp.admin_email}}'                                 => __('Admin Email', 'fluent-crm'),
+                '##wp.url##'                                         => __('Site URL', 'fluent-crm'),
+                '{{other.date.+2 days}}'                             => __('Dynamic Date (e.g. +2 days from now)', 'fluent-crm'),
+                '{{other.date_format.D, d M, Y}}'                    => __('Custom Date Format (Any PHP Date Format)', 'fluent-crm'),
+                '{{other.latest_post.title}}'                        => __('Latest Post Title (Published)', 'fluent-crm'),
+                '##crm.unsubscribe_url##'                            => __('Unsubscribe URL', 'fluent-crm'),
+                '##crm.manage_subscription_url##'                    => __('Manage Subscription URL', 'fluent-crm'),
+                '##web_preview_url##'                                => __('View in Browser URL', 'fluent-crm'),
+                '{{crm.unsubscribe_html|Unsubscribe}}'               => __('Unsubscribe Hyperlink HTML', 'fluent-crm'),
+                '{{crm.manage_subscription_html|Manage Preference}}' => __('Manage Subscription Hyperlink HTML', 'fluent-crm'),
+            ])
+        ];
+
+        /**
+         * Filter the smart code groups.
+         *
+         * This filter allows modification of the smart code groups array.
+         *
+         * @param array $smartCodes An array of smart code groups.
+         * @since 2.7.0
+         *
+         */
+        return self::withSmartCodeLevels(apply_filters('fluent_crm/smartcode_groups', $smartCodes));
+    }
+
+    /**
+     * Add a 'levels' map (code => basic|private|credential) to each smartcode group, so pickers can
+     * hide codes that would only render their fallback where the text is parsed.
+     *
+     * @param array $groups [['key' => ..., 'title' => ..., 'shortcodes' => [code => label]], ...]
+     * @return array
+     */
+    public static function withSmartCodeLevels($groups)
+    {
+        if (!is_array($groups)) {
+            return $groups;
+        }
+
+        foreach ($groups as $index => $group) {
+            if (!is_array($group) || empty($group['shortcodes']) || !is_array($group['shortcodes'])) {
+                continue;
+            }
+
+            $levels = [];
+            foreach ($group['shortcodes'] as $code => $label) {
+                $inner = trim(preg_replace('/^(\{\{|##)|(\}\}|##)$/', '', trim((string)$code)));
+                $parts = explode('.', trim(explode('|', $inner)[0]), 2);
+                if (count($parts) < 2) {
+                    continue;
+                }
+                // Upper-case segments are placeholders ({{user.meta.META_KEY}}), not real keys: rate them as an ordinary key.
+                $key = preg_replace('/\b[A-Z][A-Z0-9_]*\b/', 'field', $parts[1]);
+                $levels[$code] = \FluentCrm\App\Services\Libs\Parser\ShortcodeParser::getSmartCodeLevel($parts[0], $key);
+            }
+
+            $groups[$index]['levels'] = $levels;
+        }
+
+        return $groups;
+    }
+
+    public static function getExtendedSmartCodes()
+    {
+        /**
+         * Filter the extended smart codes for FluentCRM.
+         *
+         * This filter allows you to modify the array of extended smart codes used in FluentCRM.
+         *
+         * @param array An array of extended smart codes.
+         * @since 2.7.0
+         *
+         */
+        return self::withSmartCodeLevels(array_values(apply_filters('fluent_crm/extended_smart_codes', [])));
+    }
+
+    public static function getDoubleOptinSettings()
+    {
+        if ($settings = fluentcrm_get_option('double_optin_settings', [])) {
+            if (empty($settings['after_confirmation_type'])) {
+                $settings['after_confirmation_type'] = 'message';
+                $settings['after_conf_redirect_url'] = '';
+            }
+            return $settings;
+        }
+
+        $businessName = '';
+        $businessEmail = '';
+        $businessAddress = '';
+        $subject = __('Please confirm your subscription', 'fluent-crm');
+        $business = fluentcrmGetGlobalSettings('business_settings', []);
+
+        if (!empty($business['business_name'])) {
+            $businessName = $business['business_name'];
+            /* translators: %s: business name */
+            $subject = sprintf(__('%s: Please confirm your subscription', 'fluent-crm'), $businessName);
+            if (!empty($business['business_address'])) {
+                $businessAddress = $business['business_address'];
+            }
+        }
+
+        $emailSettings = fluentcrmGetGlobalSettings('email_settings', []);
+        if (!empty($emailSettings['from_email'])) {
+            $businessEmail = $emailSettings['from_email'];
+        }
+
+        return [
+            'email_subject'           => $subject,
+            'email_pre_header'        => '',
+            'design_template'         => 'simple',
+            'email_body'              => '<h2>' . esc_html__('Please confirm your subscription', 'fluent-crm') . '</h2><p><a style="color: #ffffff; background-color: #454545; font-size: 16px; border-radius: 5px; text-decoration: none; font-weight: normal; font-style: normal; padding: 0.8rem 1rem; border-color: #0072ff;" href="#activate_link#">' . esc_html__('Yes, subscribe me to the mailing list', 'fluent-crm') . '</a></p><p>&nbsp;</p><p>' . esc_html__('If you received this email by mistake, simply delete it. You won\'t be subscribed if you don\'t click the confirmation link above.', 'fluent-crm') . '</p><p>' . esc_html__('For questions about this list, please contact:', 'fluent-crm') . '<br />' . $businessEmail . '</p>',
+            'after_confirmation_type' => 'message',
+            'after_confirm_message'   => '<h2>' . esc_html__('Subscription confirmed', 'fluent-crm') . '</h2><p>' . esc_html__('Your subscription to our list has been confirmed.', 'fluent-crm') . '</p><p>' . esc_html__('Thank you for subscribing!', 'fluent-crm') . '</p><p>&nbsp;</p><p>' . $businessName . '</p><p>' . $businessAddress . '</p><p>&nbsp;</p><p><a style="color: #ffffff; background-color: #404040; font-size: 16px; border-radius: 5px; text-decoration: none; font-weight: normal; font-style: normal; padding: 0.8rem 1rem; border-color: #0072ff;" href="' . site_url() . '">' . esc_html__('Continue to our website', 'fluent-crm') . '</a></p>',
+            'after_conf_redirect_url' => '',
+        ];
+    }
+
+    public static function getEmailDesignTemplates()
+    {
+        $defaultDesignConfig = BlockEditorHelper::getDefaultPrefConfig();
+
+        if (defined('FLUENTCAMPAIGN')) {
+            $defaultDesignConfig['disable_footer'] = 'no';
+        }
+
+        $plainConfig = $defaultDesignConfig;
+        $plainConfig['body_bg_color'] = '#FFFFFF';
+        $plainConfig['design_template'] = 'plain';
+
+        $classicConfig = $plainConfig;
+        $classicConfig['design_template'] = 'classic';
+
+        $emptyConfig = [
+            'content_font_family' => "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol'",
+        ];
+
+        /**
+         * Filter the email design templates available in FluentCRM.
+         *
+         * @param array {
+         *     An array of email design templates.
+         *
+         * @type array $simple {
+         * @type string $id The template ID.
+         * @type string $label The template label.
+         * @type string $image The URL to the template image.
+         * @type array $config The configuration array for the template.
+         * @type bool $use_gutenberg Whether to use Gutenberg editor.
+         *     }
+         * @type array $plain {
+         * @type string $id The template ID.
+         * @type string $label The template label.
+         * @type string $image The URL to the template image.
+         * @type array $config The configuration array for the template.
+         * @type bool $use_gutenberg Whether to use Gutenberg editor.
+         *     }
+         * @type array $classic {
+         * @type string $id The template ID.
+         * @type string $label The template label.
+         * @type string $image The URL to the template image.
+         * @type array $config The configuration array for the template.
+         * @type bool $use_gutenberg Whether to use Gutenberg editor.
+         *     }
+         * @type array $raw_classic {
+         * @type string $id The template ID.
+         * @type string $label The template label.
+         * @type string $image The URL to the template image.
+         * @type array $config The configuration array for the template.
+         * @type bool $use_gutenberg Whether to use Gutenberg editor.
+         * @type string $template_type The type of the template.
+         * @type string $template_info Additional information about the template.
+         *     }
+         * @type array $raw_html {
+         * @type string $id The template ID.
+         * @type string $label The template label.
+         * @type string $image The URL to the template image.
+         * @type array $config The configuration array for the template.
+         * @type bool $use_gutenberg Whether to use Gutenberg editor.
+         * @type string $template_type The type of the template.
+         * @type string $template_info Additional information about the template.
+         *     }
+         * }
+         * @since 2.6.51
+         *
+         */
+        $templates = apply_filters('fluent_crm/email_design_templates', [
+            'simple'      => [
+                'id'            => 'simple',
+                'label'         => __('Simple Boxed', 'fluent-crm'),
+                'image'         => fluentCrmMix('images/gutenberg-builder.svg'),
+                'config'        => $defaultDesignConfig,
+                'use_gutenberg' => true
+            ],
+            'plain'       => [
+                'id'            => 'plain',
+                'label'         => __('Plain Centered', 'fluent-crm'),
+                'image'         => fluentCrmMix('images/plain_centered.svg'),
+                'config'        => $plainConfig,
+                'use_gutenberg' => true
+            ],
+            'classic'     => [
+                'id'            => 'classic',
+                'label'         => __('Plain Left', 'fluent-crm'),
+                'image'         => fluentCrmMix('images/plain_left.svg'),
+                'config'        => $classicConfig,
+                'use_gutenberg' => true
+            ],
+            'raw_classic' => [
+                'id'            => 'raw_classic',
+                'label'         => __('Classic Editor', 'fluent-crm'),
+                'image'         => fluentCrmMix('images/classic-editor.svg'),
+                'config'        => $emptyConfig,
+                'use_gutenberg' => false,
+                'template_type' => 'classic_editor',
+                'template_info' => '<h3>Classic Text Based Email</h3><p>Type your simple email and FluentCRM will send that without altering any design processing. The default footer will be injected after your content if footer is not disabled.</p>'
+            ],
+            'raw_html'    => [
+                'id'            => 'raw_html',
+                'label'         => __('Raw HTML', 'fluent-crm'),
+                'image'         => fluentCrmMix('images/html-editor.svg'),
+                'config'        => [],
+                'use_gutenberg' => false,
+                'template_type' => 'raw_text_box',
+                'template_info' => '<h3>Raw HTML Template</h3><p>You can use any type of valid html and FluentCRM will send that without altering any design processing.</p>'
+            ]
+        ]);
+
+        if (!defined('FLUENTCAMPAIGN')) {
+            $templates['visual_builder'] = [
+                'id'            => 'visual_builder',
+                'label'         => __('Visual Builder', 'fluent-crm'),
+                'image'         => fluentCrmMix('images/visual-builder.svg'),
+                'config'        => $emptyConfig,
+                'use_gutenberg' => false,
+                'template_type' => 'visual_builder_demo'
+            ];
+        }
+
+        return $templates;
+    }
+
+    public static function getTemplateConfig($templateName = '', $withGlobal = true)
+    {
+        if (!$templateName) {
+            $templateName = self::getDefaultEmailTemplate();
+        }
+        $templates = self::getEmailDesignTemplates();
+        if (!isset($templates[$templateName])) {
+            $templateName = 'simple';
+        }
+
+        $config = Arr::get($templates, $templateName . '.config', []);
+
+        if ($withGlobal) {
+            $globalSettings = fluentcrm_get_option('global_email_style_config', []);
+            return wp_parse_args($globalSettings, $config);
+        }
+
+        return $config;
+
+    }
+
+    public static function getActivatedFeatures()
+    {
+        return [
+            'fluentcampaign'       => defined('FLUENTCAMPAIGN_FRAMEWORK_VERSION'),
+            'frontend_portal'      => defined('FLUENTCAMPAIGN_FRAMEWORK_VERSION') && self::isExperimentalEnabled('frontend_portal'),
+            'company_module'       => self::isCompanyEnabled(),
+            'event_tracking'       => self::isExperimentalEnabled('event_tracking'),
+            /**
+             * Filter to disable email open tracking in FluentCRM.
+             *
+             * This filter allows to disable email open tracking globally.
+             *
+             * @param bool  Whether to disable email open tracking. Default is false.
+             * @return bool Filtered value to enable or disable email open tracking.
+             * @since 2.8.0
+             *
+             */
+            'email_open_tracking'  => !apply_filters('fluentcrm_disable_email_open_tracking', false),
+            /**
+             * Filter to enable or disable email click tracking.
+             *
+             * This filter allows you to control whether email click tracking is enabled or disabled.
+             *
+             * @param bool Whether to enable email click tracking. Default true.
+             * @since 2.8.0
+             *
+             */
+            'email_click_tracking' => apply_filters('fluent_crm/track_click', true),
+        ];
+    }
+
+    public static function getContactPrefixes($withKeyed = false)
+    {
+        $prefixes = [
+            __('Mr', 'fluent-crm'),
+            __('Mrs', 'fluent-crm'),
+            __('Ms', 'fluent-crm')
+        ];
+
+        /**
+         * Filter the contact name prefixes.
+         *
+         * This filter is deprecated. Please use fluent_crm/contact_name_prefixes instead.
+         *
+         * @param array An array of contact name prefixes.
+         * @deprecated 2.7.0 Use fluent_crm/contact_name_prefixes instead.
+         *
+         * @since 2.5.5
+         *
+         */
+        $prefixes = apply_filters('fluentcrm_contact_name_prefixes', $prefixes);
+
+        /**
+         * Filter the contact name prefixes.
+         *
+         * @param array $prefixes An array of contact name prefixes.
+         * @since 2.7.0
+         *
+         */
+        $prefixes = apply_filters('fluent_crm/contact_name_prefixes', $prefixes);
+
+        if ($withKeyed) {
+            $keyedNames = [];
+            foreach ($prefixes as $prefix) {
+                $keyedNames[$prefix] = $prefix;
+            }
+            return $keyedNames;
+        }
+        return $prefixes;
+    }
+
+    public static function getGlobalEmailSettings()
+    {
+        $defaultFooter = '{{crm.business_name}}, {{crm.business_address}}<br>Don\'t like these emails? <a href="##crm.unsubscribe_url##">Unsubscribe</a> or <a href="##crm.manage_subscription_url##">Manage Email Subscriptions</a>';
+
+        $defaults = [
+            'from_name'         => '',
+            'from_email'        => '',
+            'emails_per_second' => 15,
+            'email_footer'      => $defaultFooter,
+            'pref_list_type'    => 'no',
+            'pref_list_items'   => [],
+            'pref_form'         => 'no',
+            'pref_general'      => ['first_name', 'last_name'],
+            'pref_custom'       => [],
+            'show_on_page'      => 'no',
+            'pref_page_id'      => ''
+        ];
+
+        if ($settings = fluentcrmGetGlobalSettings('email_settings', [])) {
+            if (empty($settings['email_footer'])) {
+                $settings['email_footer'] = $defaultFooter;
+            }
+
+            if (empty($settings['pref_form'])) {
+                $settings['pref_form'] = 'no';
+                $settings['pref_general'] = ['first_name', 'last_name'];
+                $settings['pref_custom'] = [];
+            }
+
+            if (!isset($settings['pref_general'])) {
+                $settings['pref_general'] = [];
+            }
+
+            if (!isset($settings['pref_custom'])) {
+                $settings['pref_custom'] = [];
+            }
+
+            return wp_parse_args($settings, $defaults);
+        }
+
+        return $defaults;
+    }
+
+    public static function getPurchaseHistoryProviders()
+    {
+        $validProviders = [];
+
+        if (defined('FLUENTCART_VERSION')) {
+            $validProviders['fluent_cart'] = [
+                'title' => __('FluentCart Purchase History', 'fluent-crm'),
+                'name'  => __('FluentCart', 'fluent-crm')
+            ];
+        }
+
+        if (defined('WC_PLUGIN_FILE')) {
+            $validProviders['woocommerce'] = [
+                'title' => __('WooCommerce Purchase History', 'fluent-crm'),
+                'name'  => __('WooCommerce', 'fluent-crm')
+            ];
+        }
+
+        if (self::isEdd3()) {
+            $validProviders['edd'] = [
+                'title' => __('EDD Purchase History', 'fluent-crm'),
+                'name'  => __('Easy Digital Downloads', 'fluent-crm')
+            ];
+        }
+
+        if (defined('WPPAYFORM_VERSION')) {
+            $validProviders['payform'] = [
+                'title' => __('Paymattic Purchase History', 'fluent-crm'),
+                'name'  => __('Paymattic', 'fluent-crm')
+            ];
+        }
+
+        if (defined('PMPRO_VERSION') && defined('FLUENTCAMPAIGN')) {
+            $validProviders['pmpro'] = [
+                'title' => __('Paid Memberships Pro Purchase History', 'fluent-crm'),
+                'name'  => __('Paid Memberships Pro', 'fluent-crm')
+            ];
+        }
+
+        /**
+         * Filter the list of valid purchase history providers.
+         *
+         * This filter allows modification of the valid purchase history providers used in FluentCRM.
+         *
+         * @param array $validProviders An array of valid purchase history providers.
+         * @since 2.7.0
+         *
+         */
+        return apply_filters('fluent_crm/purchase_history_providers', $validProviders);
+    }
+
+    public static function getThemePrefScheme()
+    {
+        static $pref;
+        if (!$pref) {
+
+            $color_palette = [
+                [
+                    "name"  => __("Black", "fluent-crm"),
+                    "slug"  => "black",
+                    "color" => "#000000"
+                ],
+                [
+                    "name"  => __("Cyan bluish gray", "fluent-crm"),
+                    "slug"  => "cyan-bluish-gray",
+                    "color" => "#abb8c3"
+                ],
+                [
+                    "name"  => __("White", "fluent-crm"),
+                    "slug"  => "white",
+                    "color" => "#ffffff"
+                ],
+                [
+                    "name"  => __("Pale pink", "fluent-crm"),
+                    "slug"  => "pale-pink",
+                    "color" => "#f78da7"
+                ],
+                [
+                    "name"  => __("Luminous vivid orange", "fluent-crm"),
+                    "slug"  => "luminous-vivid-orange",
+                    "color" => "#ff6900"
+                ],
+                [
+                    "name"  => __("Luminous vivid amber", "fluent-crm"),
+                    "slug"  => "luminous-vivid-amber",
+                    "color" => "#fcb900"
+                ],
+                [
+                    "name"  => __("Light green cyan", "fluent-crm"),
+                    "slug"  => "light-green-cyan",
+                    "color" => "#7bdcb5"
+                ],
+                [
+                    "name"  => __("Vivid green cyan", "fluent-crm"),
+                    "slug"  => "vivid-green-cyan",
+                    "color" => "#00d084"
+                ],
+                [
+                    "name"  => __("Pale cyan blue", "fluent-crm"),
+                    "slug"  => "pale-cyan-blue",
+                    "color" => "#8ed1fc"
+                ],
+                [
+                    "name"  => __("Vivid cyan blue", "fluent-crm"),
+                    "slug"  => "vivid-cyan-blue",
+                    "color" => "#0693e3"
+                ],
+                [
+                    "name"  => __("Vivid purple", "fluent-crm"),
+                    "slug"  => "vivid-purple",
+                    "color" => "#9b51e0"
+                ]
+            ];
+
+            $font_sizes = [
+                [
+                    'name'      => __('Small', 'fluent-crm'),
+                    'shortName' => 'S',
+                    'size'      => 14,
+                    'slug'      => 'small'
+                ],
+                [
+                    'name'      => __('Medium', 'fluent-crm'),
+                    'shortName' => 'M',
+                    'size'      => 18,
+                    'slug'      => 'medium'
+                ],
+                [
+                    'name'      => __('Large', 'fluent-crm'),
+                    'shortName' => 'L',
+                    'size'      => 24,
+                    'slug'      => 'large'
+                ],
+                [
+                    'name'      => __('Larger', 'fluent-crm'),
+                    'shortName' => 'XL',
+                    'size'      => 32,
+                    'slug'      => 'larger'
+                ]
+            ];
+
+            /**
+             * Filter the theme preferences for FluentCRM.
+             *
+             * This filter allows modification of the theme preferences, including colors and font sizes.
+             *
+             * @param array {
+             *     The theme preferences.
+             *
+             * @type array $colors The color palette.
+             * @type array $font_sizes The font sizes.
+             * }
+             * @since 2.6.51
+             *
+             */
+            $pref = apply_filters('fluent_crm/theme_pref', [
+                'colors'     => (array)$color_palette,
+                'font_sizes' => (array)$font_sizes
+            ]);
+        }
+
+        return $pref;
+
+    }
+
+    public static function funnelLabelColors()
+    {
+        $colors = [
+            '#D6D8FF',
+            '#D4ECD6',
+            '#FEE8B5',
+            '#D7E8EF',
+            '#FFCACA',
+            '#F8D7C4',
+            '#D4D7DC',
+            '#FFD9E3'
+        ];
+
+        /**
+         * Filter the funnel label colors.
+         *
+         * This filter allows modification of the funnel label colors.
+         *
+         * @param array $colors An array of colors for the funnel labels.
+         * @since 2.9.30
+         *
+         */
+        return apply_filters('fluent_crm/funnel_label_color', $colors);
+    }
+
+    public static function getColorSchemeValue($colorName)
+    {
+        static $colorMap = [];
+        if (isset($colorMap[$colorName])) {
+            return $colorMap[$colorName];
+        }
+        $pref = self::getThemePrefScheme();
+        $colors = $pref['colors'];
+        foreach ($colors as $color) {
+            $colorMap[$color['slug']] = $color['color'];
+            if ($color['slug'] == $colorName) {
+                return $color['color'];
+            }
+        }
+
+        $color_palette = self::getEmailColorPalette();
+        return self::getColorBySlug($color_palette, $colorName);
+    }
+
+    public static function getColorBySlug($color_palette, $slug)
+    {
+        if (!$color_palette || !is_array($color_palette)) {
+            return null;
+        }
+
+        foreach ($color_palette as $color) {
+            if (isset($color['slug']) && isset($color['color']) && $color['slug'] === $slug) {
+                return $color['color'];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Resolve the active theme's editor color palette for both classic and block themes.
+     *
+     * @return array Items shaped ['name','slug','color']; empty when the theme has none.
+     */
+    public static function getThemeColorPalette()
+    {
+        // Block themes: merged global settings cover theme.json, child theme and FSE edits.
+        if (function_exists('wp_is_block_theme') && wp_is_block_theme() && function_exists('wp_get_global_settings')) {
+            $palette = wp_get_global_settings(['color', 'palette']);
+
+            if (!empty($palette['theme'])) {
+                return (array)$palette['theme'];
+            }
+        }
+
+        $color_palette = current((array)get_theme_support('editor-color-palette'));
+
+        return $color_palette ? (array)$color_palette : [];
+    }
+
+    /**
+     * Theme and custom palette colours, for email output.
+     *
+     * Block themes keep colours added under Styles > Colors > Custom in the "custom" origin, which
+     * getThemeColorPalette() leaves out (it also feeds the editor's Theme colour group). A block
+     * using one went out as var(--fcom--color--custom-...), which mail clients ignore, so its text,
+     * heading or button colour was lost. A custom colour wins over a theme colour with the same
+     * slug, as it does in the site editor.
+     *
+     * @return array[] Colour entries with slug, color and name.
+     */
+    public static function getEmailColorPalette()
+    {
+        $palette = self::getThemeColorPalette();
+
+        if (!function_exists('wp_is_block_theme') || !wp_is_block_theme() || !function_exists('wp_get_global_settings')) {
+            return $palette;
+        }
+
+        $origins = wp_get_global_settings(['color', 'palette']);
+        if (empty($origins['custom'])) {
+            return $palette;
+        }
+
+        $bySlug = [];
+        foreach (array_merge((array)$palette, (array)$origins['custom']) as $color) {
+            if (is_array($color) && !empty($color['slug'])) {
+                $bySlug[$color['slug']] = $color;
+            }
+        }
+
+        return array_values($bySlug);
+    }
+
+    public static function getThemeFontSizes()
+    {
+        $font_sizes = current((array)get_theme_support('editor-font-sizes'));
+        $theme_json_path = get_theme_file_path('theme.json');
+
+        if (file_exists($theme_json_path)) {
+            $theme_json = json_decode(file_get_contents($theme_json_path), true);
+
+            if (isset($theme_json['settings']['typography']['fontSizes'])) {
+                $font_sizes = $theme_json['settings']['typography']['fontSizes'];
+            }
+        }
+
+        return $font_sizes;
+    }
+
+
+    public static function generateThemePrefCss()
+    {
+        static $color_css;
+        if ($color_css) {
+            return $color_css;
+        }
+        $pref = self::getThemePrefScheme();
+
+        $css = '';
+        if (isset($pref['colors'])) {
+            foreach ($pref['colors'] as $color) {
+                if (isset($color['slug']) && isset($color['color'])) {
+                    $slug = self::kebabCase($color['slug']);
+                    $css .= '.has-' . $slug . '-color  { color: ' . $color['color'] . ';} ';
+                    $css .= '.has-' . $slug . '-background-color  { background-color: ' . $color['color'] . '; background: ' . $color['color'] . '; } ';
+                    $css .= 'a.has-' . $slug . '-background-color  { border: 1px solid ' . $color['color'] . '; } ';
+                }
+            }
+        }
+
+        if (isset($pref['font_sizes'])) {
+            foreach ($pref['font_sizes'] as $size) {
+                if (isset($size['slug']) && isset($size['size'])) {
+                    $slug = self::kebabCase($size['slug']);
+                    $css .= '.fc_email_body .has-' . $slug . '-font-size  { font-size: ' . $size['size'] . 'px !important;} ';
+                }
+            }
+        }
+
+        $themeColors = self::getEmailColorPalette();
+        if (!empty($themeColors)) {
+            foreach ($themeColors as $themeColor) {
+                if (empty($themeColor['slug']) || empty($themeColor['color'])) {
+                    continue;
+                }
+                $color = $themeColor['color'];
+
+                // Converts 'palette1' to 'palette-1'
+                $slug = self::normalizeColorSlug($themeColor['slug']);
+
+                $originalSlug = $themeColor['slug'];
+
+                $css .= ".fc_email_body .has-{$originalSlug}-background-color { background-color: {$color};}";
+                $css .= ".fc_email_body .has-{$originalSlug}-color { color: {$color};}";
+                $css .= ".fc_email_body .has-{$originalSlug}-border-color { border-color: {$color};}";
+                $css .= ".fc_email_body .has-{$slug}-background-color { background-color: {$color};}";
+                $css .= ".fc_email_body .has-{$slug}-color { color: {$color};}";
+                $css .= ".fc_email_body .has-{$slug}-border-color { border-color: {$color};}";
+            }
+        }
+
+        $themeFontSizes = self::getThemeFontSizes();
+        if (!empty($themeFontSizes)) {
+            foreach ($themeFontSizes as $themeFontSize) {
+                $size = $themeFontSize['size'];
+                $slug = $themeFontSize['slug'];
+                $css .= ".fc_email_body .has-{$slug}-font-size { font-size: {$size} !important;}";
+            }
+        }
+
+        $color_css = $css;
+        return $color_css;
+    }
+
+    public static function normalizeColorSlug($slug)
+    {
+        $slug = strtolower($slug);
+
+        if (preg_match('/^(.*?)-(\d+)$/', $slug, $matches)) {
+            return $slug;
+        }
+
+        // "theme-palette1" -> "theme-palette-1"
+        $parts = preg_split('/(\d+)/', $slug, -1, PREG_SPLIT_DELIM_CAPTURE);
+
+        if (count($parts) > 1 && ctype_digit(trim($parts[count($parts) - 2]))) {
+            return implode('-', array_filter($parts));
+        }
+
+        return $slug;
+    }
+
+    public static function kebabCase($string)
+    {
+        return implode('-', array_filter(preg_split('/(\d)/', strtolower(strval($string)), -1, PREG_SPLIT_DELIM_CAPTURE)));
+    }
+
+    public static function getMailHeadersFromSettings($emailSettings = [])
+    {
+        if (empty($emailSettings) || Arr::get($emailSettings, 'is_custom') == 'no') {
+            $emailSettings = fluentcrmGetGlobalSettings('email_settings', []);
+        }
+
+        if (empty($emailSettings)) {
+            return [];
+        }
+
+        $headers = [];
+        if (Arr::get($emailSettings, 'from_name') && Arr::get($emailSettings, 'from_email')) {
+            $headers['From'] = static::formatMailbox($emailSettings['from_name'], $emailSettings['from_email']);
+        } else if ($fromEmail = Arr::get($emailSettings, 'from_email')) {
+            $headers['From'] = $fromEmail;
+        }
+
+        if (Arr::get($emailSettings, 'reply_to_name') && Arr::get($emailSettings, 'reply_to_email')) {
+            $headers['Reply-To'] = static::formatMailbox($emailSettings['reply_to_name'], $emailSettings['reply_to_email']);
+        } else if ($replyTo = Arr::get($emailSettings, 'reply_to_email')) {
+            $headers['Reply-To'] = $replyTo;
+        }
+
+        return $headers;
+    }
+
+    /**
+     * Resolve the sender shown in admin email previews, honouring custom mailer settings like delivery does.
+     * Falls back to the site identity when no sender is configured.
+     *
+     * @param array $mailerSettings Per-campaign `mailer_settings`; global settings are used unless `is_custom` is on.
+     * @return array{name: string, email: string}
+     */
+    public static function getPreviewSender($mailerSettings = [])
+    {
+        if (empty($mailerSettings) || Arr::get($mailerSettings, 'is_custom') == 'no') {
+            $mailerSettings = fluentcrmGetGlobalSettings('email_settings', []);
+        }
+
+        return [
+            'name'  => (string)(Arr::get($mailerSettings, 'from_name') ?: get_bloginfo('name')),
+            'email' => (string)(Arr::get($mailerSettings, 'from_email') ?: get_option('admin_email'))
+        ];
+    }
+
+    public static function getMailHeader($existingHeader = [])
+    {
+        if (!empty($existingHeader['From'])) {
+            return $existingHeader;
+        }
+
+        if (!empty($existingHeader['Reply-To'])) {
+            return $existingHeader;
+        }
+
+        $headers = [];
+        static $globalHeaders;
+        if ($globalHeaders) {
+            return $globalHeaders;
+        }
+
+        $globalEmailSettings = fluentcrmGetGlobalSettings('email_settings', []);
+
+        $fromName = Arr::get($globalEmailSettings, 'from_name');
+        $fromEmail = Arr::get($globalEmailSettings, 'from_email');
+
+        if ($fromName && $fromEmail) {
+            $headers['From'] = static::formatMailbox($fromName, $fromEmail);
+        } else if ($fromEmail) {
+            $headers['From'] = $fromEmail;
+        }
+
+        $replyName = Arr::get($globalEmailSettings, 'reply_to_name');
+        $replyEmail = Arr::get($globalEmailSettings, 'reply_to_email');
+
+        if ($replyName && $replyEmail) {
+            $headers['Reply-To'] = static::formatMailbox($replyName, $replyEmail);
+        } else if ($replyEmail) {
+            $headers['Reply-To'] = $replyEmail;
+        }
+
+        $globalHeaders = $headers;
+
+        return $globalHeaders;
+    }
+
+    /**
+     * Build an RFC 5322 mailbox header, quoting display names that contain specials.
+     */
+    public static function formatMailbox($name, $email)
+    {
+        $name = trim(preg_replace('/[\r\n]+/', ' ', (string) $name));
+
+        if ($name === '') {
+            return $email;
+        }
+
+        if (preg_match('/[()<>\[\]:;@\\\\,."\x00-\x1F\x7F]/u', $name)) {
+            $name = '"' . str_replace(['\\', '"'], ['\\\\', '\\"'], $name) . '"';
+        }
+
+        return $name . ' <' . $email . '>';
+    }
+
+    public static function recordCampaignRevenue($campaignId, $amount, $orderId, $currency = 'USD', $isRefunded = false)
+    {
+        $currency = strtolower($currency);
+        $existing = fluentcrm_get_campaign_meta($campaignId, '_campaign_revenue');
+        $data = ($existing && is_array($existing->value)) ? $existing->value : [];
+
+        if (!isset($data['orderIds']) || !is_array($data['orderIds'])) {
+            $data['orderIds'] = [];
+        }
+
+        if (!isset($data[$currency]) || !is_numeric($data[$currency])) {
+            $data[$currency] = 0;
+        }
+
+        $isRecordedOrder = in_array($orderId, $data['orderIds']);
+        if (!$isRecordedOrder) {
+            $data['orderIds'][] = $orderId;
+        }
+
+        if ($isRefunded) {
+            if ($data[$currency] > $amount) {
+                $data[$currency] -= $amount;
+                $key = array_search($orderId, $data['orderIds']);
+                if ($key !== false) {
+                    unset($data['orderIds'][$key]);
+                    $data['orderIds'] = array_values($data['orderIds']);
+                }
+            }
+        } else {
+            if (!$isRecordedOrder) {
+                $data[$currency] += $amount;
+            }
+        }
+
+        return fluentcrm_update_campaign_meta($campaignId, '_campaign_revenue', $data);
+    }
+
+    public static function getWPMapUserInfo($user)
+    {
+        if (is_numeric($user)) {
+            $user = get_user_by('ID', $user);
+        }
+
+        if (!$user) {
+            return [];
+        }
+
+        $subscriber = array_filter([
+            'user_id'    => $user->ID,
+            'first_name' => $user->first_name,
+            'last_name'  => $user->last_name,
+            'email'      => $user->user_email
+        ]);
+
+        if ($address1 = get_user_meta($user->ID, 'billing_address_1', true)) {
+            $subscriber['address_line_1'] = $address1;
+        }
+
+        if ($address2 = get_user_meta($user->ID, 'billing_address_2', true)) {
+            $subscriber['address_line_2'] = $address2;
+        }
+
+        if ($city = get_user_meta($user->ID, 'billing_city', true)) {
+            $subscriber['city'] = $city;
+        }
+
+        if ($postalCode = get_user_meta($user->ID, 'billing_postcode', true)) {
+            $subscriber['postal_code'] = $postalCode;
+        }
+
+        if ($country = get_user_meta($user->ID, 'billing_country', true)) {
+            $subscriber['country'] = $country;
+        }
+
+        if ($state = get_user_meta($user->ID, 'billing_state', true)) {
+            $subscriber['state'] = $state;
+        }
+
+        if ($phone = get_user_meta($user->ID, 'billing_phone', true)) {
+            $subscriber['phone'] = $phone;
+        }
+
+        /**
+         * Filter the subscriber data before it is processed.
+         *
+         * This filter allows you to modify the subscriber data before it is processed.
+         *
+         * @param array $subscriber The subscriber data.
+         * @param object $user The WordPress user object.
+         * @since 2.5.3
+         *
+         */
+        $subscriber = apply_filters('fluentcrm_user_map_data', $subscriber, $user);
+
+        $fillables = (new Subscriber)->getFillable();
+
+        $subscriber = Arr::only($subscriber, $fillables);
+
+        return array_filter($subscriber);
+    }
+
+    /**
+     * Whether the user's current email may identify their contact.
+     *
+     * WordPress lets a user change their own email through the REST API with no confirmation,
+     * so that address proves nothing until a password reset reaches it.
+     * See Cleanup::flagUnverifiedEmailChange(). The `verified_email_match` compliance setting turns this off.
+     *
+     * @param \WP_User|false|null $user
+     * @return bool
+     */
+    public static function isUserEmailVerified($user)
+    {
+        if (!$user || empty($user->user_email)) {
+            return false;
+        }
+
+        if (self::getComplianceSettings()['verified_email_match'] === 'no') {
+            return true;
+        }
+
+        $unverified = get_user_meta($user->ID, '_fcrm_unverified_email', true);
+
+        return !$unverified || strtolower($unverified) !== strtolower($user->user_email);
+    }
+
+    /**
+     * The logged-in user's own contact, or null. Never the fc_hash_secure email-click cookie contact.
+     *
+     * Use this, not getCurrentContact(true, true), for anything that personalizes server-rendered
+     * page HTML (form prefill, page-builder conditions). A full-page cache can store that HTML and
+     * serve it to every visitor, and logged-in requests are the one case page caches keep private.
+     * getCurrentContact()'s request cache is skipped on purpose: earlier cookie-aware code on the
+     * page may already have put the cookie contact there. One lookup per user per request.
+     *
+     * @return \FluentCrm\App\Models\Subscriber|null
+     */
+    public static function getLoggedInContact()
+    {
+        static $contacts = [];
+
+        $userId = get_current_user_id();
+        if (!$userId) {
+            return null;
+        }
+
+        if (!array_key_exists($userId, $contacts)) {
+            $contacts[$userId] = FluentCrmApi('contacts')->getCurrentContact(false, false);
+        }
+
+        return $contacts[$userId];
+    }
+
+    /**
+     * Whether linking this user to the contact with this email would rest only on an unverified email.
+     *
+     * A user_id whose account email differs from the contact's is not an email match, so it is allowed.
+     *
+     * @param int $userId
+     * @param string $email The contact's email.
+     * @return bool
+     */
+    public static function isUnverifiedEmailLink($userId, $email)
+    {
+        $user = $userId ? get_user_by('ID', $userId) : false;
+
+        return $user && $email && strtolower($user->user_email) === strtolower($email) && !self::isUserEmailVerified($user);
+    }
+
+    /**
+     * Whether the email change being saved now is one the user made to their own account, unconfirmed.
+     *
+     * Only profile.php sends a confirmation email; the REST API and front-end profile forms apply
+     * the change at once. A user manager's change, or one made by code with no logged-in user, is trusted.
+     *
+     * @param int $userId
+     * @param string $newEmail
+     * @return bool
+     */
+    public static function isUnconfirmedSelfEmailChange($userId, $newEmail)
+    {
+        if (self::getComplianceSettings()['verified_email_match'] === 'no') {
+            return false;
+        }
+
+        if (get_current_user_id() !== (int)$userId || current_user_can('edit_users')) {
+            return false;
+        }
+
+        // wp-admin/user-edit.php applies a confirmed change while `_new_email` still holds the link's hash
+        $pending = get_user_meta($userId, '_new_email', true);
+        $isConfirmed = isset($_GET['newuseremail']) && is_array($pending) && !empty($pending['hash'])
+            && hash_equals($pending['hash'], (string)$_GET['newuseremail'])
+            && strtolower(trim($pending['newemail'])) === strtolower($newEmail);
+
+        return !$isConfirmed;
+    }
+
+    public static function isUserSyncEnabled()
+    {
+        static $result = null;
+        if ($result === null) {
+            $settings = fluentcrm_get_option('user_syncing_settings', []);
+            $result = $settings && isset($settings['status']) && $settings['status'] == 'yes';
+        }
+
+        return $result;
+    }
+
+    public static function isContactDeleteOnUserDeleteEnabled()
+    {
+        static $result = null;
+        if ($result === null) {
+            $settings = fluentcrm_get_option('user_syncing_settings', []);
+            $result = $settings && isset($settings['delete_contact_on_user_delete']) && $settings['delete_contact_on_user_delete'] == 'yes';
+        }
+
+        return $result;
+    }
+
+    /**
+     * A contact date of birth as stored: a real calendar date in YYYY-MM-DD, or false.
+     *
+     * The column is a DATE. Anything else either becomes 0000-00-00 (lax SQL mode, wiping a
+     * real birthday) or fails the whole write (strict mode). Day-first and month-first forms
+     * such as 01/02/1990 are refused rather than guessed.
+     *
+     * @param mixed $value
+     * @return string|false
+     */
+    public static function normalizeDateOfBirth($value)
+    {
+        $value = trim((string)$value);
+        if (!preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $value, $m)) {
+            return false;
+        }
+
+        return checkdate((int)$m[2], (int)$m[3], (int)$m[1]) ? $value : false;
+    }
+
+    /**
+     * An imported date as Y-m-d, or false when it is not a full, valid date.
+     *
+     * Only numeric dates with a 4-digit year: year first (1990-12-31, 1990/12/31, 1990.12.31,
+     * a trailing time is ignored), or year last as PHP reads them, month first with slashes
+     * (12/31/1990) and day first with dashes or dots (31-12-1990, 31.12.1990). Partial or relative
+     * values (1990, Jan 5, now) are refused instead of guessed: strtotime() turned "1990" into
+     * today's date in 1990 and "2/30/1990" into March 2, which fired birthday emails on wrong days.
+     *
+     * @param mixed $value
+     * @return string|false
+     */
+    public static function parseImportDate($value)
+    {
+        if (!is_scalar($value)) {
+            return false;
+        }
+        $value = trim((string)$value);
+
+        if (preg_match('/^(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?$/', $value, $m)) {
+            list(, $year, $month, $day) = $m;
+        } elseif (preg_match('/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/', $value, $m)) {
+            list(, $month, $day, $year) = $m;
+        } elseif (preg_match('/^(\d{1,2})[-.](\d{1,2})[-.](\d{4})$/', $value, $m)) {
+            list(, $day, $month, $year) = $m;
+        } else {
+            return false;
+        }
+
+        if (!checkdate((int)$month, (int)$day, (int)$year)) {
+            return false;
+        }
+
+        return sprintf('%04d-%02d-%02d', $year, $month, $day);
+    }
+
+    public static function deleteContacts($contactIds)
+    {
+        if (!$contactIds) {
+            return false;
+        }
+        if (!is_array($contactIds)) {
+            $contactIds = (array)$contactIds;
+        }
+
+        do_action('fluentcrm_before_subscribers_deleted', $contactIds);
+        Subscriber::whereIn('id', $contactIds)->delete();
+        do_action('fluentcrm_after_subscribers_deleted', $contactIds);
+        return true;
+    }
+
+    public static function sendDoubleOptin($contactIds)
+    {
+        if (!$contactIds) {
+            return false;
+        }
+        if (!is_array($contactIds)) {
+            $contactIds = (array)$contactIds;
+        }
+
+        $subscribers = Subscriber::whereIn('id', $contactIds)->where('status', '!=', 'subscribed')->get();
+        foreach ($subscribers as $subscriber) {
+            $subscriber->sendDoubleOptinEmail();
+        }
+        return true;
+    }
+
+    public static function hasComplianceText($text)
+    {
+        /**
+         * Filters the compliance check string result.
+         *
+         * This filter allows you to modify the result of the compliance check string.
+         *
+         * @param mixed $result The result of the compliance check string.
+         * @param string $text The text being checked for compliance.
+         * @since 2.8.33
+         *
+         */
+        $result = apply_filters('fluent_crm/disable_check_compliance_string', false, $text);
+
+        if ($result) {
+            return true;
+        }
+
+        return (bool)preg_match('/##crm\.manage_subscription_url##|##crm\.unsubscribe_url##|\{\{crm\.unsubscribe_html|\{\{crm\.manage_subscription_html|\{\{crm_global_email_footer\}\}/', $text);
+    }
+
+    public static function maybeDisableEmojiOnEmail()
+    {
+        static $disabled;
+        if ($disabled) {
+            return;
+        }
+        /**
+         * Filter to disable emoji conversion to images in FluentCRM.
+         *
+         * This filter allows you to disable the conversion of emojis to images.
+         * By default, this filter is set to true, meaning the conversion is enabled.
+         * You can use this filter to return false if you want to disable the conversion.
+         *
+         * @param bool Whether to disable emoji conversion to images. Default true.
+         * @since 2.7.0
+         *
+         */
+        if (apply_filters('fluent_crm/disable_emoji_to_image', true)) {
+            remove_filter('wp_mail', 'wp_staticize_emoji_for_email');
+        }
+        $disabled = true;
+    }
+
+    /**
+     * Country code from Cloudflare's CF-IPCountry header, or '' when unavailable.
+     * Trusted only alongside CF-Ray by default, a best-effort heuristic since both are forgeable.
+     */
+    public static function getCfIpCountry()
+    {
+        $countryCode = strtoupper(sanitize_text_field($_SERVER['HTTP_CF_IPCOUNTRY'] ?? ''));
+
+        if (!$countryCode || !preg_match('/^[A-Z]{2}$/', $countryCode) || $countryCode === 'XX') {
+            return '';
+        }
+
+        $trusted = apply_filters('fluent_crm/trust_cf_ipcountry', !empty($_SERVER['HTTP_CF_RAY']));
+
+        return $trusted ? $countryCode : '';
+    }
+
+    public static function getPublicLists()
+    {
+        $emailSettings = self::getGlobalEmailSettings();
+        $lists = [];
+        $preListType = Arr::get($emailSettings, 'pref_list_type', 'none');
+        if ($preListType == 'filtered_only') {
+            $prefListItems = Arr::get($emailSettings, 'pref_list_items', []);
+            if ($prefListItems) {
+                $lists = Lists::whereIn('id', $prefListItems)->get();
+                if ($lists->isEmpty()) {
+                    return [];
+                }
+            }
+        } else if ($preListType == 'all') {
+            $lists = Lists::get();
+            if ($lists->isEmpty()) {
+                return [];
+            }
+        }
+
+        return $lists;
+    }
+
+    public static function getAdvancedFilterOptions()
+    {
+        $groups = [
+            'subscriber' => [
+                'label'    => __('Contact', 'fluent-crm'),
+                'value'    => 'subscriber',
+                'children' => [
+                    [
+                        'label' => __('General Properties', 'fluent-crm'),
+                        'value' => 'search',
+                    ],
+                    [
+                        'label' => __('First name', 'fluent-crm'),
+                        'value' => 'first_name',
+                        'type'  => 'nullable_text',
+                    ],
+                    [
+                        'label' => __('Last name', 'fluent-crm'),
+                        'value' => 'last_name',
+                        'type'  => 'nullable_text',
+                    ],
+                    [
+                        'label' => __('Email', 'fluent-crm'),
+                        'value' => 'email',
+                    ],
+                    [
+                        'label' => __('Address Line 1', 'fluent-crm'),
+                        'value' => 'address_line_1',
+                        'type'  => 'nullable_text',
+                    ],
+                    [
+                        'label' => __('Address Line 2', 'fluent-crm'),
+                        'value' => 'address_line_2',
+                        'type'  => 'nullable_text',
+                    ],
+                    [
+                        'label' => __('City', 'fluent-crm'),
+                        'value' => 'city',
+                        'type'  => 'nullable_text',
+                    ],
+                    [
+                        'label' => __('State', 'fluent-crm'),
+                        'value' => 'state',
+                        'type'  => 'nullable_text',
+                    ],
+                    [
+                        'label' => __('Postal code', 'fluent-crm'),
+                        'value' => 'postal_code',
+                        'type'  => 'nullable_text',
+                    ],
+                    [
+                        'label'             => __('Country', 'fluent-crm'),
+                        'value'             => 'country',
+                        'type'              => 'selections',
+                        'component'         => 'options_selector',
+                        'option_key'        => 'countries',
+                        'is_multiple'       => true,
+                        'is_singular_value' => true
+                    ],
+                    [
+                        'label' => __('Phone', 'fluent-crm'),
+                        'value' => 'phone',
+                        'type'  => 'nullable_text',
+                    ],
+                    [
+                        'label' => __('WP User ID', 'fluent-crm'),
+                        'value' => 'user_id',
+                        'type'  => 'numeric',
+                    ],
+                    [
+                        'label'       => __('Name Prefix (Title)', 'fluent-crm'),
+                        'value'       => 'prefix',
+                        'type'        => 'selections',
+                        'options'     => self::getContactPrefixes(true),
+                        'is_multiple' => true,
+                        'is_only_in'  => true
+                    ],
+                    [
+                        'label' => __('Source', 'fluent-crm'),
+                        'value' => 'source'
+                    ],
+                    [
+                        'label' => __('Date of Birth', 'fluent-crm'),
+                        'value' => 'date_of_birth',
+                        'type'  => 'dates',
+                    ],
+                    [
+                        'label' => __('Last Activity', 'fluent-crm'),
+                        'value' => 'last_activity',
+                        'type'  => 'dates',
+                    ],
+                    [
+                        'label' => __('Created At', 'fluent-crm'),
+                        'value' => 'created_at',
+                        'type'  => 'dates',
+                    ],
+
+                ],
+            ],
+            'segment'    => [
+                'label'    => __('Contact Segment', 'fluent-crm'),
+                'value'    => 'segment',
+                'children' => [
+                    [
+                        'label'             => __('Status', 'fluent-crm'),
+                        'value'             => 'status',
+                        'type'              => 'selections',
+                        'component'         => 'options_selector',
+                        'option_key'        => 'statuses',
+                        'is_multiple'       => true,
+                        'is_singular_value' => true
+                    ],
+                    [
+                        'label'             => __('Type', 'fluent-crm'),
+                        'value'             => 'contact_type',
+                        'type'              => 'selections',
+                        'component'         => 'options_selector',
+                        'option_key'        => 'contact_types',
+                        'is_multiple'       => false,
+                        'is_singular_value' => true
+                    ],
+                    [
+                        'label'       => __('Tags', 'fluent-crm'),
+                        'value'       => 'tags',
+                        'type'        => 'selections',
+                        'component'   => 'options_selector',
+                        'option_key'  => 'tags',
+                        'is_multiple' => true,
+                        'is_nullable' => true,
+                    ],
+                    [
+                        'label'       => __('Lists', 'fluent-crm'),
+                        'value'       => 'lists',
+                        'type'        => 'selections',
+                        'component'   => 'options_selector',
+                        'option_key'  => 'lists',
+                        'is_multiple' => true,
+                        'is_nullable' => true,
+                    ],
+                    [
+                        'label'             => __('WP User Role', 'fluent-crm'),
+                        'value'             => 'user_role',
+                        'type'              => 'selections',
+                        'component'         => 'options_selector',
+                        'option_key'        => 'user_roles_options',
+                        'is_multiple'       => false,
+                        'is_singular_value' => true,
+                        'help'              => __('Filter by WordPress user role. Make sure your users are synced with your FluentCRM contacts.', 'fluent-crm')
+                    ],
+                ],
+            ],
+            'activities' => [
+                'label'    => __('Contact Activities', 'fluent-crm'),
+                'value'    => 'activities',
+                'children' => [
+                    [
+                        'label' => __('Last Email Sent', 'fluent-crm'),
+                        'value' => 'email_sent',
+                        'type'  => 'dates',
+                    ],
+                    [
+                        'label' => __('Last Email Opened', 'fluent-crm'),
+                        'value' => 'email_opened',
+                        'type'  => 'dates',
+                        'help'  => __('Some email clients trigger the open-tracking pixel automatically, so open data may not be 100% accurate.', 'fluent-crm')
+                    ],
+                    [
+                        'label' => __('Last Email Clicked', 'fluent-crm'),
+                        'value' => 'email_link_clicked',
+                        'type'  => 'dates',
+                    ],
+                    [
+                        'label'              => __('Campaign Email -', 'fluent-crm'),
+                        'value'              => 'campaign_email_activity',
+                        'type'               => 'selections',
+                        'component'          => 'ajax_selector',
+                        'option_key'         => 'campaigns',
+                        'is_multiple'        => false,
+                        'custom_operators'   => [
+                            'clicked'     => 'link clicked',
+                            'not_clicked' => 'did not click',
+                            'open'        => 'opened',
+                            'no_open'     => 'did not open yet',
+                            'in'          => 'in (email sent)',
+                            'not_in'      => 'not in (regardless of status)'
+                        ],
+                        'experimental_cache' => true,
+                        'help'               => __('Only includes contacts who were sent the selected campaign, then filters them by whether they opened it or clicked a link. <br />Some email clients trigger the open-tracking pixel automatically, so open data may not be 100% accurate.', 'fluent-crm')
+                    ],
+                    [
+                        'label'              => __('Automation Activity -', 'fluent-crm'),
+                        'value'              => 'automation_activity',
+                        'type'               => 'selections',
+                        'component'          => 'ajax_selector',
+                        'option_key'         => 'funnels',
+                        'is_multiple'        => false,
+                        'custom_operators'   => [
+                            'completed' => 'status completed',
+                            'active'    => 'status active',
+                            'cancelled' => 'status cancelled',
+                            'waiting'   => 'status waiting',
+                            'in'        => 'in (regardless of status)',
+                            'not_in'    => 'not in (regardless of status)'
+                        ],
+                        'experimental_cache' => true,
+                        'help'               => __('Filter contacts by their activity in a specific automation.', 'fluent-crm')
+                    ],
+                    [
+                        'label'              => __('Email Sequence Activity -', 'fluent-crm'),
+                        'value'              => 'email_sequence_activity',
+                        'type'               => 'selections',
+                        'component'          => 'ajax_selector',
+                        'option_key'         => 'email_sequences',
+                        'is_multiple'        => false,
+                        'custom_operators'   => [
+                            'completed' => 'status completed',
+                            'active'    => 'status active',
+                            'cancelled' => 'status cancelled',
+                            'in'        => 'in (regardless of status)',
+                            'not_in'    => 'not in (regardless of status)'
+                        ],
+                        'experimental_cache' => true,
+                        'help'               => __('Filter contacts by their activity in a specific email sequence.', 'fluent-crm')
+                    ]
+                ]
+            ]
+        ];
+
+        if (self::isCompanyEnabled()) {
+            $groups['segment']['children'][] = [
+                'label'              => __('Company', 'fluent-crm'),
+                'value'              => 'companies',
+                'type'               => 'selections',
+                'component'          => 'ajax_selector',
+                'option_key'         => 'companies',
+                'is_multiple'        => true,
+                'is_singular_value'  => true,
+                'is_nullable'        => true,
+                'experimental_cache' => true
+            ];
+            $groups['segment']['children'][] = [
+                'label'              => __('Company - Industry', 'fluent-crm'),
+                'value'              => 'company_industry',
+                'type'               => 'selections',
+                'component'          => 'ajax_selector',
+                'option_key'         => 'company_industries',
+                'is_multiple'        => true,
+                'is_singular_value'  => true,
+                'experimental_cache' => true
+            ];
+            $groups['segment']['children'][] = [
+                'label'              => __('Company - Type', 'fluent-crm'),
+                'value'              => 'company_type',
+                'type'               => 'selections',
+                'component'          => 'ajax_selector',
+                'option_key'         => 'company_types',
+                'is_multiple'        => true,
+                'is_singular_value'  => true,
+                'experimental_cache' => true
+            ];
+        }
+
+        if ($customFields = fluentcrm_get_custom_contact_fields()) {
+            $children = [];
+            foreach ($customFields as $field) {
+                $item = [
+                    'label' => $field['label'],
+                    'value' => $field['slug'],
+                    'type'  => $field['type'],
+                ];
+
+                if ($item['type'] == 'number') {
+                    $item['type'] = 'numeric';
+                } else if ($item['type'] == 'date') {
+                    $item['type'] = 'dates';
+                    $item['date_type'] = 'date';
+                    $item['value_format'] = 'YYYY-MM-DD';
+                } else if ($item['type'] == 'date_time') {
+                    $item['type'] = 'dates';
+                    $item['has_time'] = 'yes';
+                    $item['date_type'] = 'datetime';
+                    $item['value_format'] = 'YYYY-MM-DD HH:mm:ss';
+                } else if (isset($field['options'])) {
+                    $item['type'] = 'selections';
+                    $options = $field['options'];
+                    $formattedOptions = [];
+                    foreach ($options as $option) {
+                        $formattedOptions[$option] = $option;
+                    }
+                    $item['options'] = $formattedOptions;
+                    $isMultiple = in_array($field['type'], ['checkbox', 'select-multi']);
+                    $item['is_multiple'] = $isMultiple;
+                    if ($isMultiple) {
+                        $item['is_singular_value'] = true;
+                    }
+
+                } else {
+                    $item['type'] = 'text';
+                }
+
+                $children[] = $item;
+
+            }
+
+            $groups['custom_fields'] = [
+                'label'    => __('Custom fields', 'fluent-crm'),
+                'value'    => 'custom_fields',
+                'children' => $children
+            ];
+        }
+
+        if (!defined('FLUENTCAMPAIGN')) {
+            $disabled = true;
+            if (defined('WC_PLUGIN_FILE')) {
+                $groups['woo'] = [
+                    'label'    => __('WooCommerce', 'fluent-crm'),
+                    'value'    => 'woo',
+                    'children' => [
+                        [
+                            'value'    => 'total_order_count',
+                            'label'    => __('Total Order Count (Pro Required)', 'fluent-crm'),
+                            'type'     => 'numeric',
+                            'disabled' => true
+                        ],
+                        [
+                            'value'    => 'total_order_value',
+                            'label'    => __('Total Order Value (Pro Required)', 'fluent-crm'),
+                            'type'     => 'numeric',
+                            'disabled' => true
+                        ],
+                        [
+                            'value'    => 'last_order_date',
+                            'label'    => __('Last Order Date (Pro Required)', 'fluent-crm'),
+                            'type'     => 'dates',
+                            'disabled' => true
+                        ],
+                        [
+                            'value'    => 'first_order_date',
+                            'label'    => __('First Order Date (Pro Required)', 'fluent-crm'),
+                            'type'     => 'dates',
+                            'disabled' => true
+                        ],
+                        [
+                            'value'       => 'purchased_items',
+                            'label'       => __('Purchased Products (Pro Required)', 'fluent-crm'),
+                            'type'        => 'selections',
+                            'component'   => 'product_selector',
+                            'is_multiple' => true,
+                            'disabled'    => true
+                        ],
+                        [
+                            'value'             => 'commerce_exist',
+                            'label'             => __('Is a customer? (Pro Required)', 'fluent-crm'),
+                            'type'              => 'selections',
+                            'is_multiple'       => false,
+                            'disable_values'    => true,
+                            'value_description' => __('This filter checks whether the contact has at least one order', 'fluent-crm'),
+                            'custom_operators'  => [
+                                'exist'     => 'Yes',
+                                'not_exist' => 'No',
+                            ],
+                            'disabled'          => true
+                        ]
+                    ],
+                ];
+            }
+
+            if (self::isEdd3()) {
+                $groups['edd'] = [
+                    'label'    => __('EDD', 'fluent-crm'),
+                    'value'    => 'edd',
+                    'children' => [
+                        [
+                            'value'    => 'total_order_count',
+                            'label'    => __('Total Order Count (Pro Required)', 'fluent-crm'),
+                            'type'     => 'numeric',
+                            'disabled' => true
+                        ],
+                        [
+                            'value'    => 'total_order_value',
+                            'label'    => __('Total Order Value (Pro Required)', 'fluent-crm'),
+                            'type'     => 'numeric',
+                            'disabled' => true
+                        ],
+                        [
+                            'value'    => 'last_order_date',
+                            'label'    => __('Last Order Date (Pro Required)', 'fluent-crm'),
+                            'type'     => 'dates',
+                            'disabled' => true
+                        ],
+                        [
+                            'value'    => 'first_order_date',
+                            'label'    => __('First Order Date (Pro Required)', 'fluent-crm'),
+                            'type'     => 'dates',
+                            'disabled' => true
+                        ],
+                        [
+                            'value'       => 'purchased_items',
+                            'label'       => __('Purchased Products (Pro Required)', 'fluent-crm'),
+                            'type'        => 'selections',
+                            'component'   => 'product_selector',
+                            'is_multiple' => true,
+                            'disabled'    => true
+                        ],
+                    ],
+                ];
+            }
+
+            if (class_exists('\Affiliate_WP')) {
+                $groups['aff_wp'] = [
+                    'label'    => 'AffiliateWP',
+                    'value'    => 'aff_wp',
+                    'children' => [
+                        [
+                            'value'    => 'is_affiliate',
+                            'label'    => __('Is Affiliate (Pro Required)', 'fluent-crm'),
+                            'type'     => 'single_assert_option',
+                            'options'  => [
+                                'yes' => __('Yes', 'fluent-crm'),
+                                'no'  => __('No', 'fluent-crm')
+                            ],
+                            'disabled' => $disabled
+                        ],
+                        [
+                            'value'    => 'affiliate_id',
+                            'label'    => __('Affiliate ID (Pro Required)', 'fluent-crm'),
+                            'type'     => 'numeric',
+                            'disabled' => $disabled
+                        ],
+                        [
+                            'value'    => 'referrals',
+                            'label'    => __('Total Referrals (Pro Required)', 'fluent-crm'),
+                            'type'     => 'numeric',
+                            'disabled' => $disabled
+                        ],
+                        [
+                            'value'    => 'status',
+                            'label'    => __('Status (Pro Required)', 'fluent-crm'),
+                            'type'     => 'single_assert_option',
+                            'options'  => [
+                                'active'   => __('Active', 'fluent-crm'),
+                                'inactive' => __('Inactive', 'fluent-crm'),
+                                'pending'  => __('Pending', 'fluent-crm')
+                            ],
+                            'disabled' => $disabled
+                        ],
+                        [
+                            'value'    => 'earnings',
+                            'label'    => __('Earnings (Pro Required)', 'fluent-crm'),
+                            'type'     => 'numeric',
+                            'disabled' => $disabled
+                        ],
+                        [
+                            'value'    => 'unpaid_earnings',
+                            'label'    => __('Unpaid Earnings (Pro Required)', 'fluent-crm'),
+                            'type'     => 'numeric',
+                            'disabled' => $disabled
+                        ],
+                        [
+                            'value'    => 'date_registered',
+                            'label'    => __('Registration Date (Pro Required)', 'fluent-crm'),
+                            'type'     => 'dates',
+                            'disabled' => $disabled
+                        ],
+                        [
+                            'value'    => 'last_payment_date',
+                            'label'    => __('Last Payout Date (Pro Required)', 'fluent-crm'),
+                            'type'     => 'dates',
+                            'disabled' => $disabled
+                        ]
+                    ]
+                ];
+            }
+
+            if (defined('LEARNDASH_VERSION')) {
+                $groups['learndash'] = [
+                    'label'    => __('LearnDash', 'fluent-crm'),
+                    'value'    => 'learndash',
+                    'children' => [
+                        [
+                            'value'    => 'last_order_date',
+                            'label'    => __('Last Enrollment Date (Pro Required)', 'fluent-crm'),
+                            'type'     => 'dates',
+                            'disabled' => $disabled
+                        ],
+                        [
+                            'value'    => 'first_order_date',
+                            'label'    => __('First Enrollment Date (Pro Required)', 'fluent-crm'),
+                            'type'     => 'dates',
+                            'disabled' => $disabled
+                        ],
+                        [
+                            'value'       => 'purchased_items',
+                            'label'       => __('Enrollment Courses (Pro Required)', 'fluent-crm'),
+                            'type'        => 'selections',
+                            'component'   => 'product_selector',
+                            'is_multiple' => true,
+                            'disabled'    => $disabled
+                        ],
+                        [
+                            'value'        => 'purchased_groups',
+                            'label'        => __('Enrollment Groups (Pro Required)', 'fluent-crm'),
+                            'type'         => 'selections',
+                            'component'    => 'product_selector',
+                            'is_multiple'  => true,
+                            'extended_key' => 'groups',
+                            'disabled'     => $disabled,
+                            'options'      => []
+                        ],
+                        [
+                            'value'       => 'purchased_categories',
+                            'label'       => __('Enrollment Categories (Pro Required)', 'fluent-crm'),
+                            'type'        => 'selections',
+                            'component'   => 'tax_selector',
+                            'taxonomy'    => 'ld_course_category',
+                            'is_multiple' => true,
+                            'disabled'    => $disabled
+                        ],
+                        [
+                            'value'       => 'purchased_tags',
+                            'label'       => __('Enrollment Tags (Pro Required)', 'fluent-crm'),
+                            'type'        => 'selections',
+                            'component'   => 'tax_selector',
+                            'taxonomy'    => 'ld_course_tag',
+                            'is_multiple' => true,
+                            'disabled'    => $disabled
+                        ]
+                    ]
+                ];
+            }
+
+            if (defined('LLMS_PLUGIN_FILE')) {
+                $groups['lifterlms'] = [
+                    'label'    => __('LifterLMS', 'fluent-crm'),
+                    'value'    => 'lifterlms',
+                    'children' => [
+                        [
+                            'value'    => 'last_order_date',
+                            'label'    => __('Last Enrollment Date (Pro Required)', 'fluent-crm'),
+                            'type'     => 'dates',
+                            'disabled' => $disabled
+                        ],
+                        [
+                            'value'    => 'first_order_date',
+                            'label'    => __('First Enrollment Date (Pro Required)', 'fluent-crm'),
+                            'type'     => 'dates',
+                            'disabled' => $disabled
+                        ],
+                        [
+                            'value'       => 'purchased_items',
+                            'label'       => __('Enrollment Courses (Pro Required)', 'fluent-crm'),
+                            'type'        => 'selections',
+                            'component'   => 'product_selector',
+                            'is_multiple' => true,
+                            'disabled'    => $disabled
+                        ],
+                        [
+                            'value'        => 'purchased_groups',
+                            'label'        => __('Enrollment Memberships (Pro Required)', 'fluent-crm'),
+                            'type'         => 'selections',
+                            'component'    => 'product_selector',
+                            'extended_key' => 'groups',
+                            'is_multiple'  => true,
+                            'disabled'     => $disabled
+                        ],
+                        [
+                            'value'       => 'purchased_categories',
+                            'label'       => __('Enrollment Categories (Pro Required)', 'fluent-crm'),
+                            'type'        => 'selections',
+                            'component'   => 'tax_selector',
+                            'taxonomy'    => 'course_cat',
+                            'is_multiple' => true,
+                            'disabled'    => $disabled
+                        ],
+                        [
+                            'value'       => 'purchased_tags',
+                            'label'       => __('Enrollment Tags (Pro Required)', 'fluent-crm'),
+                            'type'        => 'selections',
+                            'component'   => 'tax_selector',
+                            'taxonomy'    => 'course_tag',
+                            'is_multiple' => true,
+                            'disabled'    => $disabled
+                        ]
+                    ],
+                ];
+            }
+        }
+
+        /**
+         * Filter the advanced filter options for FluentCRM.
+         *
+         * This filter allows modification of the advanced filter options used in FluentCRM.
+         *
+         * @param array $groups The current filter options.
+         * @since 2.5.1
+         *
+         */
+        $groups = apply_filters('fluentcrm_advanced_filter_options', $groups);
+
+        return array_values($groups);
+    }
+
+    /**
+     * Convert a tracker value (true, false, 'anonymous', or legacy 'yes'/'no') to 'yes', 'anonymous' or 'no'.
+     *
+     * @param mixed $status
+     * @return string
+     */
+    public static function trackingLevel($status)
+    {
+        if ($status === 'anonymous') {
+            return 'anonymous';
+        }
+
+        return (!$status || $status === 'no') ? 'no' : 'yes';
+    }
+
+    public static function getComplianceSettings()
+    {
+        $defaults = [
+            'anonymize_ip'           => 'no',
+            'delete_contact_on_user' => 'no',
+            'verified_email_match'   => 'yes',
+            'personal_data_export'   => 'yes',
+            'one_click_unsubscribe'  => 'no',
+            'enable_gravatar'        => 'yes',
+            'gravatar_fallback'      => 'yes',
+            'email_click_tracking'   => 'yes', // 'no'|'yes'|'anonymous'
+            'email_open_tracking'    => 'yes', // 'no'|'yes'|'anonymous'
+        ];
+
+        $settings = get_option('_fluentcrm_compliance_settings', []);
+
+        return wp_parse_args($settings, $defaults);
+    }
+
+    public static function getSiteUrl($path = '', $scheme = null)
+    {
+        return site_url($path, $scheme);
+    }
+
+    /**
+     * Format a datetime using FluentCRM's global date/time display preference.
+     *
+     * @param string $dateTime Site-local MySQL datetime.
+     * @return string
+     */
+    public static function formatDateTime($dateTime)
+    {
+        if (!$dateTime) {
+            return '';
+        }
+
+        $timestamp = strtotime($dateTime);
+
+        if (!$timestamp) {
+            return $dateTime;
+        }
+
+        if (self::isExperimentalEnabled('classic_date_time')) {
+            return date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $timestamp);
+        }
+
+        $currentTimestamp = current_time('timestamp');
+        $diff = human_time_diff($timestamp, $currentTimestamp);
+
+        if ($timestamp > $currentTimestamp) {
+            return sprintf(
+                /* translators: %s: Human-readable time difference. */
+                __('in %s', 'fluent-crm'),
+                $diff
+            );
+        }
+
+        return sprintf(
+            /* translators: %s: Human-readable time difference. */
+            _x('%s ago', '%s = human-readable time difference', 'fluent-crm'),
+            $diff
+        );
+    }
+
+    public static function isExperimentalEnabled($module)
+    {
+        $settings = self::getExperimentalSettings();
+        return Arr::get($settings, $module) === 'yes';
+    }
+
+    public static function getExperimentalSettings()
+    {
+        static $settings;
+        if ($settings) {
+            return $settings;
+        }
+
+        $defaults = [
+            'campaign_archive'        => 'no',
+            'campaign_group_by_month' => 'no',
+            'campaign_search'         => '',
+            'campaign_max_number'     => 50,
+            'campaign_ids'            => [],
+            'campaign_status'         => 'archived',
+            'frontend_portal'         => 'no',
+            'frontend_portal_slug'    => 'fluentcrm',
+            'frontend_portal_render_type' => 'standalone',
+            'frontend_portal_page_id' => '',
+            'classic_date_time'       => 'no',
+            'company_module'          => 'no',
+            'company_auto_logo'       => 'no',
+            'disable_visual_ai'       => 'no',
+            'multi_threading_emails'  => 'yes',
+            'system_logs'             => 'no',
+            'event_tracking'          => 'no',
+            'abandoned_cart'          => 'no',
+            'activity_log'            => 'no',
+            'messaging_module'        => 'no',
+        ];
+
+        $settings = get_option('_fluentcrm_experimental_settings', []);
+
+        if (!$settings || !is_array($settings)) {
+            $settings = $defaults;
+        } else {
+            $settings = wp_parse_args($settings, $defaults);
+        }
+
+        // Cache the filtered value: caching the raw one made every later call skip the filter.
+        $settings = apply_filters('fluent_crm/experimental_settings', $settings);
+
+        return $settings;
+    }
+
+    public static function willMultiThreadEmail($minPendingLimit = 300)
+    {
+        if (!self::isExperimentalEnabled('multi_threading_emails')) {
+            return false;
+        }
+
+        $rowcount = self::getUpcomingEmailCount($minPendingLimit);
+
+        return $rowcount >= $minPendingLimit;
+    }
+
+    /**
+     * Count sendable (pending/scheduled, due) queue rows.
+     * With $cap the count is exact below the cap and saturates at it.
+     *
+     * @param int $cap Optional scan ceiling (0 = exact full count).
+     * @return int
+     */
+    public static function getUpcomingEmailCount($cap = 0)
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'fc_campaign_emails';
+        $cap = (int)$cap;
+
+        if ($cap > 0) {
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            return (int)$wpdb->get_var($wpdb->prepare(
+                "SELECT COUNT(*) FROM (SELECT 1 FROM `{$table}` WHERE `status` IN ('pending', 'scheduled') AND `scheduled_at` <= %s LIMIT %d) capped_scan",
+                current_time('mysql'),
+                $cap
+            ));
+        }
+
+        // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+        return (int)$wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(*) FROM `{$table}` WHERE `status` IN ('pending', 'scheduled') AND `scheduled_at` <= %s",
+            current_time('mysql')
+        ));
+    }
+
+    public static function sanitizeHtml($html)
+    {
+        if (!$html) {
+            return $html;
+        }
+
+        if (!preg_match('/<[^>]*>/', $html)) {
+            return $html;
+        }
+
+        $tags = wp_kses_allowed_html('post');
+        $tags['style'] = [
+            'types' => [],
+        ];
+        $tags['iframe'] = [
+            'width'           => [],
+            'height'          => [],
+            'src'             => [],
+            'title'           => [],
+            'frameborder'     => [],
+            'allow'           => [],
+            'class'           => [],
+            'id'              => [],
+            'allowfullscreen' => [],
+            'style'           => [],
+        ];
+
+        if (empty($tags['svg'])) {
+            $svg_args = [
+                'svg'   => [
+                    'class'           => true,
+                    'aria-hidden'     => true,
+                    'aria-labelledby' => true,
+                    'role'            => true,
+                    'xmlns'           => true,
+                    'width'           => true,
+                    'height'          => true,
+                    'viewbox'         => true,
+                ],
+                'g'     => ['fill' => true],
+                'title' => ['title' => true],
+                'path'  => [
+                    'd'         => true,
+                    'fill'      => true,
+                    'transform' => true,
+                ],
+            ];
+            $tags = array_merge($tags, $svg_args);
+        }
+
+        /**
+         * Filter the allowed HTML tags.
+         *
+         * This filter allows modification of the HTML tags that are allowed.
+         *
+         * @param array $tags An array of allowed HTML tags.
+         * @since 2.7.0
+         *
+         */
+        $tags = apply_filters('fluent_crm/allowed_html_tags', $tags);
+
+        return wp_kses($html, $tags);
+    }
+
+    /**
+     * Whether a body holds per-contact conditional content, including inside synced patterns.
+     *
+     * A synced email pattern is referenced as <!-- wp:block {"ref":N} /--> and its blocks live in
+     * the fc_meta row N (object_type email_pattern), resolved the same way BlockParser renders it,
+     * so the referenced content (patterns can nest) is checked too. A false answer lets the body
+     * be rendered once and reused for every recipient.
+     *
+     * @param string $string
+     * @param int    $depth  internal; stops pattern loops
+     * @return bool
+     */
+    public static function hasConditionOnString($string, $depth = 0)
+    {
+        $string = (string)$string;
+        if (preg_match('/conditional-group|fcrmConditionType|conditional-content|fc-cond-blocks|fc_vis_cond/', $string)) {
+            return true;
+        }
+
+        if (strpos($string, 'wp:block') === false) {
+            return false;
+        }
+
+        // Past the depth limit the parser still renders the deeper patterns: assume conditional
+        // so the body is never rendered once and reused for every recipient.
+        if ($depth >= 5) {
+            return true;
+        }
+
+        static $patternContents = [];
+        preg_match_all('/<!--\s*wp:block\s+(\{.*?\})\s*\/?-->/', $string, $matches);
+        foreach ($matches[1] as $attrs) {
+            $ref = (int)Arr::get((array)json_decode($attrs, true), 'ref');
+            if (!$ref) {
+                continue;
+            }
+            if (!array_key_exists($ref, $patternContents)) {
+                $pattern = \FluentCrm\App\Models\Meta::where('object_type', 'email_pattern')
+                    ->where('id', $ref)
+                    ->first();
+                $patternContents[$ref] = ($pattern && !empty($pattern->value['content'])) ? (string)$pattern->value['content'] : '';
+            }
+            if ($patternContents[$ref] !== '' && self::hasConditionOnString($patternContents[$ref], $depth + 1)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static function getEmailFooterContent($campaign = null)
+    {
+        if ($campaign && isset($campaign->settings)) {
+
+            if (Arr::get($campaign->settings, 'is_transactional') == 'yes') {
+                return '';
+            }
+
+            $customFooter = Arr::get($campaign->settings, 'footer_settings.custom_footer');
+            $emailFooter = Arr::get($campaign->settings, 'footer_settings.footer_content');
+
+            if ($customFooter === 'yes' && $emailFooter) {
+                return $emailFooter;
+            }
+        }
+
+        return Arr::get(self::getGlobalEmailSettings(), 'email_footer', '');
+    }
+
+    /**
+     * Title for the `custom_email_campaign` row behind a one-off email, naming the recipient.
+     *
+     * @param string $recipientEmail
+     * @param string $prefix Optional caller tag (e.g. 'MCP').
+     * @return string
+     */
+    public static function oneOffEmailTitle($recipientEmail, $prefix = '')
+    {
+        $recipientEmail = sanitize_text_field((string)$recipientEmail);
+
+        $label = $prefix
+            /* translators: 1: caller tag such as "MCP", 2: recipient email address */
+            ? sprintf(__('%1$s one-off email to %2$s', 'fluent-crm'), $prefix, $recipientEmail)
+            /* translators: %s: recipient email address */
+            : sprintf(__('Custom email to %s', 'fluent-crm'), $recipientEmail);
+
+        // fc_campaigns.title is VARCHAR(192).
+        if (mb_strlen($label) > 190) {
+            $label = mb_substr($label, 0, 189) . '…';
+        }
+
+        return $label;
+    }
+
+    public static function getFooterConfig($campaign = null)
+    {
+
+        $defaults = [
+            'disable_footer' => 'no',
+            'custom_footer'  => 'no',
+            'footer_content' => '',
+            'font_size'      => 13,
+            'font_color'     => '#202020',
+            'background_color' => 'transparent',
+            'footer_padding' => 20
+        ];
+
+        if ($campaign && isset($campaign->settings)) {
+            if (Arr::get($campaign->settings, 'is_transactional') == 'yes') {
+                return [];
+            }
+            $footerSettings = Arr::get($campaign->settings, 'footer_settings', []);
+            $disableFooter = Arr::get($footerSettings, 'disable_footer');
+            if ($disableFooter !== 'yes' && $disableFooter !== 'no') {
+                $disableFooter = Arr::get($campaign->settings, 'template_config.disable_footer');
+            }
+
+            if ($disableFooter == 'yes') {
+                $defaults['disable_footer'] = 'yes';
+                $defaults['footer_content'] = '';
+                return $defaults;
+            }
+            if (!empty($footerSettings['font_size'])) {
+                $defaults['font_size'] = $footerSettings['font_size'];
+            }
+
+            if (!empty($footerSettings['font_color'])) {
+                $defaults['font_color'] = $footerSettings['font_color'];
+            }
+
+            if (!empty($footerSettings['background_color'])) {
+                $defaults['background_color'] = $footerSettings['background_color'];
+            }
+
+            $footerPadding = Arr::get($footerSettings, 'footer_padding');
+            if ($footerPadding !== null && $footerPadding !== '') {
+                $defaults['footer_padding'] = min(80, max(0, intval($footerPadding)));
+            } else {
+                $defaults['footer_padding'] = 20;
+            }
+
+            $customFooter = Arr::get($campaign->settings, 'footer_settings.custom_footer');
+            $emailFooter = Arr::get($campaign->settings, 'footer_settings.footer_content');
+
+            if ($customFooter === 'yes' && $emailFooter) {
+                $defaults['footer_content'] = $emailFooter;
+                return $defaults;
+            }
+        }
+
+        $globalContent = Arr::get(self::getGlobalEmailSettings(), 'email_footer', '');
+
+        $defaults['footer_content'] = $globalContent;
+
+        return $defaults;
+    }
+
+    public static function isCompanyEnabled()
+    {
+        return self::isExperimentalEnabled('company_module');
+    }
+
+    public static function companyCategories()
+    {
+        /**
+         * Filter the list of company categories.
+         *
+         * This filter allows modification of the company categories list.
+         *
+         * @param array An array of company categories.
+         * @since 2.8.0
+         *
+         */
+        return apply_filters('fluent_crm/company_categories', [
+            'Accounting',
+            'Airlines/Aviation',
+            'Alternative Dispute Resolution',
+            'Alternative Medicine',
+            'Animation',
+            'Apparel & Fashion',
+            'Architecture & Planning',
+            'Arts and Crafts',
+            'Automotive',
+            'Aviation & Aerospace',
+            'Banking',
+            'Biotechnology',
+            'Broadcast Media',
+            'Building Materials',
+            'Business Supplies and Equipment',
+            'Capital Markets',
+            'Chemicals',
+            'Civic & Social Organization',
+            'Civil Engineering',
+            'Commercial Real Estate',
+            'Computer & Network Security',
+            'Computer Games',
+            'Computer Hardware',
+            'Computer Networking',
+            'Computer Software',
+            'Internet',
+            'Construction',
+            'Consumer Electronics',
+            'Consumer Goods',
+            'Consumer Services',
+            'Cosmetics',
+            'Dairy',
+            'Defense & Space',
+            'Design',
+            'Education Management',
+            'E-Learning',
+            'Electrical/Electronic Manufacturing',
+            'Entertainment',
+            'Environmental Services',
+            'Events Services',
+            'Executive Office',
+            'Facilities Services',
+            'Farming',
+            'Financial Services',
+            'Fine Art',
+            'Fishery',
+            'Food & Beverages',
+            'Food Production',
+            'Fund-Raising',
+            'Furniture',
+            'Gambling & Casinos',
+            'Glass, Ceramics & Concrete',
+            'Government Administration',
+            'Government Relations',
+            'Graphic Design',
+            'Health, Wellness and Fitness',
+            'Higher Education',
+            'Hospital & Health Care',
+            'Hospitality',
+            'Human Resources',
+            'Import and Export',
+            'Individual & Family Services',
+            'Industrial Automation',
+            'Information Services',
+            'Information Technology and Services',
+            'Insurance',
+            'International Affairs',
+            'International Trade and Development',
+            'Investment Banking',
+            'Investment Management',
+            'Judiciary',
+            'Law Enforcement',
+            'Law Practice',
+            'Legal Services',
+            'Legislative Office',
+            'Leisure, Travel & Tourism',
+            'Libraries',
+            'Logistics and Supply Chain',
+            'Luxury Goods & Jewelry',
+            'Machinery',
+            'Management Consulting',
+            'Maritime',
+            'Market Research',
+            'Marketing and Advertising',
+            'Mechanical or Industrial Engineering',
+            'Media Production',
+            'Medical Devices',
+            'Medical Practice',
+            'Mental Health Care',
+            'Military',
+            'Mining & Metals',
+            'Motion Pictures and Film',
+            'Museums and Institutions',
+            'Music',
+            'Nanotechnology',
+            'Newspapers',
+            'Non-Profit Organization Management',
+            'Oil & Energy',
+            'Online Media',
+            'Outsourcing/Offshoring',
+            'Package/Freight Delivery',
+            'Packaging and Containers',
+            'Paper & Forest Products',
+            'Performing Arts',
+            'Pharmaceuticals',
+            'Philanthropy',
+            'Photography',
+            'Plastics',
+            'Political Organization',
+            'Primary/Secondary Education',
+            'Printing',
+            'Professional Training & Coaching',
+            'Program Development',
+            'Public Policy',
+            'Public Relations and Communications',
+            'Public Safety',
+            'Publishing',
+            'Railroad Manufacture',
+            'Ranching',
+            'Real Estate',
+            'Recreational Facilities and Services',
+            'Religious Institutions',
+            'Renewables & Environment',
+            'Research',
+            'Restaurants',
+            'Retail',
+            'Security and Investigations',
+            'Semiconductors',
+            'Shipbuilding',
+            'Sporting Goods',
+            'Sports',
+            'Staffing and Recruiting',
+            'Supermarkets',
+            'Telecommunications',
+            'Textiles',
+            'Think Tanks',
+            'Tobacco',
+            'Translation and Localization',
+            'Transportation/Trucking/Railroad',
+            'Utilities',
+            'Venture Capital & Private Equity',
+            'Veterinary',
+            'Warehousing',
+            'Wholesale',
+            'Wine and Spirits',
+            'Wireless',
+            'Writing and Editing'
+        ]);
+    }
+
+    public static function companyTypes()
+    {
+        /**
+         * Filter the list of company types.
+         *
+         * This filter allows modification of the company types array.
+         *
+         * @param array An array of company types.
+         * @since 2.8.0
+         *
+         */
+        return apply_filters('fluent_crm/company_types', [
+            'Prospect',
+            'Partner',
+            'Reseller',
+            'Vendor',
+            'Other'
+        ]);
+    }
+
+    public static function getCompanyProfileSections()
+    {
+        $sections = [
+            'overview'   => [
+                'name'    => 'view_company',
+                'title'   => __('Contacts', 'fluent-crm'),
+                'handler' => 'route'
+            ],
+            'activities' => [
+                'name'    => 'company_activities',
+                'title'   => __('Notes & Activities', 'fluent-crm'),
+                'handler' => 'route'
+            ],
+        ];
+
+        /**
+         * Filter the company profile sections.
+         *
+         * This filter allows modification of the company profile sections.
+         *
+         * @param array The array of company profile sections.
+         * @since 2.8.0
+         *
+         */
+        return apply_filters('fluent_crm/company_profile_sections', $sections);
+    }
+
+    public static function maybeParseAndFilterWebhookData(Webhook $webhook, $postData, $key)
+    {
+        $data = Arr::get($webhook->value, $key, []);
+        if (!empty($postData[$key])) {
+            $postedData = Arr::get($postData, $key, []);
+
+            if (is_string($postedData)) {
+                $postedData = explode(',', $postedData);
+                $postedData = map_deep($postedData, 'intval');
+            }
+
+            $newData = [];
+            foreach ($postedData as $item) {
+                if (is_numeric($item)) {
+                    $newData[] = $item;
+                }
+            }
+
+            if (!empty($newData)) {
+                $data = $newData;
+            }
+
+            $data = array_filter($data);
+        }
+
+        return $data;
+    }
+
+    public static function getNoteSyncFields()
+    {
+        $fields = array(
+            'type'        => array(
+                'type'    => 'input-option',
+                'label'   => __('Type', 'fluent-crm'),
+                'id'      => 'fc_note_type',
+                'name'    => 'type',
+                'options' => fluentcrm_activity_types()
+            ),
+            'created_at'  => array(
+                'type'         => 'input-date',
+                'data_type'    => 'datetime',
+                'name'         => 'created_at',
+                'label'        => __('Date and Time', 'fluent-crm'),
+                'id'           => 'fc_note_title',
+                'value_format' => 'YYYY-MM-DD HH:mm:ss',
+                'help'         => __('Leave blank to use the current time.', 'fluent-crm')
+            ),
+            'title'       => array(
+                'type'        => 'input-text',
+                'name'        => 'title',
+                'label'       => __('Title', 'fluent-crm'),
+                'id'          => 'fc_note_title',
+                'placeholder' => __('Your Note Title', 'fluent-crm')
+            ),
+            'description' => array(
+                'type'  => 'wp-editor',
+                'name'  => 'description',
+                'label' => __('Description', 'fluent-crm'),
+                'id'    => 'fc_note_desc'
+            ),
+        );
+
+        /**
+         * Filter the contact note fields.
+         *
+         * This filter allows modification of the contact note fields.
+         *
+         * @param array $fields The contact note fields.
+         * @since 2.8.40
+         *
+         */
+        return apply_filters('fluent_crm/contact_note_fields', $fields);
+    }
+
+    public static function debugLog($title, $description = '', $type = 'info')
+    {
+        static $isEnabled = null;
+
+        if ($isEnabled === null) {
+            $isEnabled = (defined('FLUENT_CRM_DEBUG_LOG') && FLUENT_CRM_DEBUG_LOG) || self::isExperimentalEnabled('system_logs');
+        }
+
+        if (!$isEnabled) {
+            return null;
+        }
+
+        if (!is_string($description)) {
+            $description = json_encode($description);
+        }
+
+        return SystemLog::create([
+            'title'       => sanitize_text_field($title),
+            'description' => wp_kses_post($description)
+        ]);
+    }
+
+    public static function getNextMinuteTaskTimeStamp()
+    {
+        $lastRunAt = fluentCrmGetOptionCache('_fcrm_last_scheduler');
+
+        if ($lastRunAt) {
+            $nextRun = $lastRunAt + 60;
+        } else {
+            $nextRun = as_next_scheduled_action('fluentcrm_scheduled_every_minute_tasks');
+        }
+
+        if ($nextRun === true || !$nextRun) {
+            $nextRun = time() + 60;
+        }
+
+        return $nextRun;
+    }
+
+    public static function isWooHposEnabled()
+    {
+        static $enabled = null;
+        if ($enabled !== null) {
+            return $enabled;
+        }
+
+        $enabled = class_exists('\Automattic\WooCommerce\Utilities\OrderUtil') && \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled();
+
+        return $enabled;
+    }
+
+    public static function searchWPUsers($searchQuery, $limit = 20)
+    {
+        $search = sanitize_text_field($searchQuery);
+
+        $args = array(
+            'role__not_in' => array('administrator'),
+            'search'       => '*' . $search . '*',
+            'number'       => $limit
+        );
+
+        $user_query = new \WP_User_Query($args);
+        $users_by_login = $user_query->get_results();
+        $users = array_unique($users_by_login, SORT_REGULAR);
+
+        return $users;
+    }
+
+    public static function latestListIdOfSubscriber($contactId)
+    {
+        $listId = SubscriberPivot::where('subscriber_id', $contactId)
+            ->where('object_type', 'FluentCrm\App\Models\Lists')
+            ->orderBy('created_at', 'DESC')
+            ->orderBy('id', 'DESC')
+            ->value('object_id');
+
+        return $listId;
+    }
+
+    /**
+     * Per-request memo for Tag/Lists lookups by title, keyed on the raw title.
+     */
+    private static $termTitleCache = [];
+
+    private static function findTermByTitleCached($title, $type)
+    {
+        $key = $type . ':' . $title;
+
+        if (array_key_exists($key, self::$termTitleCache)) {
+            return self::$termTitleCache[$key];
+        }
+
+        $term = $type === 'tag'
+            ? Tag::where('title', $title)->first()
+            : Lists::where('title', $title)->first();
+
+        return self::$termTitleCache[$key] = $term;
+    }
+
+    public static function createNewTags($tagsArray)
+    {
+        $tags = [];
+        foreach ($tagsArray as $tag) {
+            $tag = sanitize_text_field($tag);
+            $sameTag = self::findTermByTitleCached($tag, 'tag');
+            if ($sameTag) {
+                $tags[] = $sameTag->id;
+                continue;
+            }
+
+            $tagModel = Helper::createTag($tag);
+
+            if ($tagModel) {
+                $tags[] = $tagModel->id;
+            }
+        }
+
+        return $tags;
+    }
+
+    public static function createNewLists($listsArray)
+    {
+        $lists = [];
+        foreach ($listsArray as $list) {
+            $list = sanitize_text_field($list);
+            $sameList = self::findTermByTitleCached($list, 'list');
+            if ($sameList) {
+                $lists[] = $sameList->id;
+                continue;
+            }
+
+            $listModel = Helper::createList($list);
+
+            if ($listModel) {
+                $lists[] = $listModel->id;
+            }
+        }
+
+        return $lists;
+    }
+
+    public static function getNewAttachableLists($listsArray, $currentListIds, $ListsForAllContacts)
+    {
+        $listIds = [];
+
+        foreach ($listsArray as $listTitle) {
+            $listTitle = sanitize_text_field($listTitle);
+
+            $existinglist = self::findTermByTitleCached($listTitle, 'list');
+            if ($existinglist) {
+                if (!in_array($existinglist->id, $currentListIds) && !in_array($existinglist->id, $ListsForAllContacts)) {
+                    $listIds[] = $existinglist->id;
+                }
+            } else {
+                $newList = Helper::createList($listTitle);
+                $listIds[] = $newList->id;
+            }
+        }
+
+        return $listIds;
+    }
+
+    public static function getNewAttachableTags($tagsArray, $currentTagIds, $TagsForAllContacts)
+    {
+        $tagIds = [];
+
+        foreach ($tagsArray as $tagTitle) {
+            $tagTitle = sanitize_text_field($tagTitle);
+
+            $existingTag = self::findTermByTitleCached($tagTitle, 'tag');
+            if ($existingTag) {
+                if (!in_array($existingTag->id, $currentTagIds) && !in_array($existingTag->id, $TagsForAllContacts)) {
+                    $tagIds[] = $existingTag->id;
+                }
+            } else {
+                $newList = Helper::createTag($tagTitle);
+                $tagIds[] = $newList->id;
+            }
+        }
+
+        return $tagIds;
+    }
+
+    private static function createList($listTitle)
+    {
+        $baseSlug = Str::slug($listTitle);
+        $slug = $baseSlug;
+        $counter = 1;
+
+        while (Lists::where('slug', $slug)->exists()) {
+            $slug = "{$baseSlug}-{$counter}";
+            $counter++;
+        }
+
+        $list = Lists::create(
+            [
+                'title' => $listTitle,
+                'slug'  => $slug
+            ]
+        );
+
+        return self::$termTitleCache['list:' . $listTitle] = $list;
+    }
+
+    private static function createTag($tagTitle)
+    {
+        $baseSlug = Str::slug($tagTitle);
+        $slug = $baseSlug;
+        $counter = 1;
+
+        while (Tag::where('slug', $slug)->exists()) {
+            $slug = "{$baseSlug}-{$counter}";
+            $counter++;
+        }
+
+        $tag = Tag::create(
+            [
+                'title' => $tagTitle,
+                'slug'  => $slug
+            ]
+        );
+
+        return self::$termTitleCache['tag:' . $tagTitle] = $tag;
+    }
+
+    /**
+     * Converts text into a URL-friendly slug, handling Latin and non-Latin scripts.
+     *
+     * @param string $text Input text to slugify
+     * @param string $fallback Fallback slug if input is empty or invalid
+     * @return string Sanitized slug
+     */
+    public static function slugify($text, $fallback = '')
+    {
+        $text = trim((string)$text);
+
+        if (empty($text)) {
+            return sanitize_title($fallback ?: self::generateUniqueId(), $fallback);
+        }
+
+        $slug = remove_accents($text);
+        $slug = strtolower($slug);
+        $slug = preg_replace('/[^a-z0-9\-_]/', '-', $slug);
+        $slug = preg_replace('/[\-_]{2,}/', '-', $slug);
+        $slug = trim($slug, '-_');
+
+        // Non-Latin scripts get a random slug.
+        if (empty($slug) || preg_match('/[^\p{Latin}\p{N}\-_ ]/u', $text)) {
+            $slug = self::generateUniqueId();
+        }
+
+        return sanitize_title($slug, $fallback);
+    }
+
+    /**
+     * Generates a unique, hyphenated identifier (~11-12 characters).
+     *
+     * @return string Unique ID, e.g., '6f1a2-xyz12'
+     */
+    public static function generateUniqueId()
+    {
+        return sprintf('%s-%s', substr(uniqid(), -5), wp_generate_password(5, false, false));
+    }
+
+    public static function getStatusText($text)
+    {
+        if (!$text) {
+            return '';
+        }
+
+        $mapStatus = [
+            'subscribed'     => __('Subscribed', 'fluent-crm'),
+            'pending'        => __('Pending', 'fluent-crm'),
+            'unsubscribed'   => __('Unsubscribed', 'fluent-crm'),
+            'transactional'  => __('Transactional', 'fluent-crm'),
+            'bounced'        => __('Bounced', 'fluent-crm'),
+            'complained'     => __('Complained', 'fluent-crm'),
+            'spammed'        => __('Spammed', 'fluent-crm'),
+            'checkout-draft' => __('Checkout Draft', 'fluent-crm'),
+            'completed'      => __('Completed', 'fluent-crm'),
+            'complete'       => __('Completed', 'fluent-crm'),
+            'on-draft'       => __('On Draft', 'fluent-crm'),
+            'cancelled'      => __('Canceled', 'fluent-crm'),
+            'processing'     => __('Processing', 'fluent-crm'),
+            'paid'           => __('Paid', 'fluent-crm'),
+            'success'        => __('Success', 'fluent-crm')
+        ];
+
+        $mapStatus = apply_filters('fluent_crm/status_text', $mapStatus);
+
+        return isset($mapStatus[$text]) ? $mapStatus[$text] : ucfirst($text);
+    }
+
+    public static function wasProcessedByKeyId($emailLogId)
+    {
+        static $sentIds = [];
+
+        if (isset($sentIds[$emailLogId])) {
+            return true;
+        }
+
+        $sentIds[$emailLogId] = true;
+
+        return false;
+    }
+
+    public static function setInstantOption($optionKey, $value, $expire = 300)
+    {
+        if (wp_using_ext_object_cache()) {
+            return wp_cache_set($optionKey, $value, 'fc_instant_options', $expire);
+        }
+
+        return update_option($optionKey, $value, false);
+    }
+
+    public static function getInstantOption($optionKey)
+    {
+        if (wp_using_ext_object_cache()) {
+            return wp_cache_get($optionKey, 'fc_instant_options');
+        }
+
+        return get_option($optionKey);
+    }
+
+    /**
+     * Raise PHP's time limit to at least $seconds; never lower it.
+     *
+     * set_time_limit() lowers as readily as it raises, and the value outlives our code: under
+     * WP-CLI (unlimited) or on a host allowing more than $seconds, every later job in the same
+     * process (other plugins' Action Scheduler actions included) would inherit the lower limit.
+     * Mirrors ActionScheduler_Compatibility::raise_time_limit().
+     *
+     * @param int $seconds Minimum limit the caller needs, in seconds.
+     * @return void
+     */
+    public static function raiseTimeLimit($seconds)
+    {
+        $seconds = (int)$seconds;
+        $current = (int)ini_get('max_execution_time');
+
+        // 0 is unlimited.
+        if ($seconds < 1 || $current === 0 || $current >= $seconds || !function_exists('set_time_limit')) {
+            return;
+        }
+
+        @set_time_limit($seconds);
+    }
+
+    /**
+     * Acquire a cross-process mutex with one atomic conditional UPDATE on wp_options.
+     * Claims the lock when free or older than $ttl. wp_cache_add() is not atomic on
+     * every object-cache drop-in (LiteSpeed), so the lock lives in the DB.
+     * A $token stores "<timestamp>|<token>" so refresh/delete are ownership-guarded.
+     *
+     * @param string $key   wp_options option_name holding the lock timestamp.
+     * @param int    $ttl   Seconds before a held lock is treated as abandoned.
+     * @param string $token Optional per-acquire owner token (LIKE-safe chars).
+     * @return bool True if this process acquired the lock.
+     */
+    public static function acquireDbLock($key, $ttl, $token = '')
+    {
+        global $wpdb;
+        $now = time();
+
+        $wpdb->query($wpdb->prepare(
+            "INSERT IGNORE INTO {$wpdb->options} (option_name, option_value, autoload) VALUES (%s, %s, %s)",
+            $key, '', 'no'
+        ));
+
+        $value = $token === '' ? (string)$now : $now . '|' . $token;
+
+        // A released lock holds ''.
+        $affected = $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND (option_value = '' OR option_value < %d)",
+            $value, $key, $now - $ttl
+        ));
+
+        if ($affected > 0) {
+            wp_cache_delete($key, 'options');
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Push a held lock's timestamp to now so acquireDbLock() does not treat it as stale.
+     *
+     * @param string $key   wp_options option_name holding the lock timestamp.
+     * @param string $token Owner token passed to acquireDbLock(), if any.
+     * @return bool True while this holder still owns the lock (always true without a token).
+     */
+    public static function refreshDbLock($key, $token = '')
+    {
+        global $wpdb;
+
+        if ($token === '') {
+            $wpdb->query($wpdb->prepare(
+                "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s",
+                (string)time(), $key
+            ));
+            wp_cache_delete($key, 'options');
+            return true;
+        }
+
+        $affected = $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->options} SET option_value = %s WHERE option_name = %s AND option_value LIKE %s",
+            time() . '|' . $token, $key, '%|' . $wpdb->esc_like($token)
+        ));
+        wp_cache_delete($key, 'options');
+
+        if ($affected > 0) {
+            return true;
+        }
+
+        // mysqli reports 0 for an unchanged row (same-second refresh), so check ownership.
+        $value = (string)$wpdb->get_var($wpdb->prepare(
+            "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s",
+            $key
+        ));
+
+        $suffix = '|' . $token;
+        return substr($value, -strlen($suffix)) === $suffix;
+    }
+
+    /**
+     * Release a lock by clearing its timestamp. Not ownership-guarded.
+     *
+     * @param string $key wp_options option_name holding the lock timestamp.
+     * @return void
+     */
+    public static function releaseDbLock($key)
+    {
+        global $wpdb;
+        $wpdb->query($wpdb->prepare(
+            "UPDATE {$wpdb->options} SET option_value = '' WHERE option_name = %s",
+            $key
+        ));
+        wp_cache_delete($key, 'options');
+    }
+
+    /**
+     * Release a lock by deleting its row; use for per-object keys. Guarded by $token if given.
+     *
+     * @param string $key   wp_options option_name holding the lock timestamp.
+     * @param string $token Owner token passed to acquireDbLock(), if any.
+     * @return void
+     */
+    public static function deleteDbLock($key, $token = '')
+    {
+        global $wpdb;
+
+        if ($token === '') {
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM {$wpdb->options} WHERE option_name = %s",
+                $key
+            ));
+        } else {
+            $wpdb->query($wpdb->prepare(
+                "DELETE FROM {$wpdb->options} WHERE option_name = %s AND option_value LIKE %s",
+                $key, '%|' . $wpdb->esc_like($token)
+            ));
+        }
+
+        wp_cache_delete($key, 'options');
+    }
+
+    /**
+     * Read a lock's last (re)acquire timestamp directly from wp_options, bypassing caches.
+     *
+     * @param string $key wp_options option_name holding the lock timestamp.
+     * @return int Unix timestamp of the last (re)acquire, or 0 if free/absent.
+     */
+    public static function getDbLockTimestamp($key)
+    {
+        global $wpdb;
+
+        $value = $wpdb->get_var($wpdb->prepare(
+            "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s",
+            $key
+        ));
+
+        return (int) $value;
+    }
+
+    /**
+     * Which companion plugins a setup-wizard request asks to install; only the string 'yes' counts.
+     * SetupController and SettingsPolicy must both read the flags through this method.
+     *
+     * @param Request $request
+     * @return array<string,bool> Keyed by plugin: `fluentform`, `fluentcart`.
+     */
+    public static function getWizardPluginInstallFlags(Request $request)
+    {
+        return [
+            'fluentform' => $request->get('install_fluentform', 'no') === 'yes',
+            'fluentcart' => $request->get('install_fluentcart', 'no') === 'yes',
+        ];
+    }
+
+}

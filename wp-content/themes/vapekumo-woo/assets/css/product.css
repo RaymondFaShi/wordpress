@@ -1,0 +1,716 @@
+@charset "UTF-8";
+/* ==========================================================================
+   product.css — 商品詳細ページ
+   読み込み順：normalize.css → bootstrap.min.css → slick.css → common.css → product.css
+   ・common.css の共通コンポーネント（.crumbs / .btn / .rating / .product-card /
+     .editor-content / .section など）は再定義しない。ここはこのページ固有のパーツのみ。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. パンくず（下線なしを明示）
+   -------------------------------------------------------------------------- */
+.crumbs__link,
+.crumbs__current{text-decoration:none}
+
+/* --------------------------------------------------------------------------
+   2. 商品メイン（ギャラリー＋商品情報）
+   -------------------------------------------------------------------------- */
+.pdp{padding-block:14px 2px}
+.pdp__grid{--bs-gutter-x:var(--gap);--bs-gutter-y:20px}
+
+/* --------------------------------------------------------------------------
+   3. 商品ギャラリー
+   -------------------------------------------------------------------------- */
+.pdp-gallery{
+  position:relative;
+  display:grid;
+  grid-template-columns:68px minmax(0,1fr);
+  gap:10px;
+}
+
+/* 左の画像一覧（上下ボタン＋縦スクロール）
+   ・枚数が増えてもギャラリー全体の高さはメイン画像側で決まるよう、
+     高さをメイン画像に合わせて絶対配置する（一覧側はその中でスクロール） */
+.pdp-gallery__rail{
+  position:absolute;
+  top:0;
+  bottom:0;
+  left:0;
+  width:68px;
+  grid-column:1;
+  grid-row:1;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  min-height:0;
+}
+.pdp-gallery__nav{
+  flex:0 0 auto;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:100%;
+  height:26px;
+  padding:0;
+  border:1px solid var(--line);
+  border-radius:var(--radius-sm);
+  background:var(--white);
+  color:var(--navy);
+  cursor:pointer;
+  transition:background-color .16s var(--ease),border-color .16s var(--ease),color .16s var(--ease);
+}
+.pdp-gallery__nav .bi{font-size:14px}
+.pdp-gallery__nav:hover:not([disabled]){border-color:var(--cta);background:var(--cta);color:#fff}
+.pdp-gallery__nav[disabled]{opacity:.35;cursor:default}
+
+/* サムネイル（縦並び・多いときはスクロール） */
+.pdp-gallery__thumbs{
+  flex:1 1 auto;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  min-height:0;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-width:thin;
+  scrollbar-color:var(--line-strong) transparent;
+}
+.pdp-gallery__thumbs::-webkit-scrollbar{width:5px}
+.pdp-gallery__thumbs::-webkit-scrollbar-thumb{border-radius:99px;background:var(--line-strong)}
+.pdp-gallery__thumb{
+  flex:0 0 auto;
+  width:100%;
+  padding:0;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:var(--radius-sm);
+  background:var(--white);
+  cursor:pointer;
+  transition:border-color .16s var(--ease),box-shadow .16s var(--ease);
+}
+.pdp-gallery__thumb img{display:block;width:100%;aspect-ratio:1/1;object-fit:cover}
+.pdp-gallery__thumb:hover{border-color:var(--line-strong)}
+.pdp-gallery__thumb.is-active{
+  border-color:var(--cta);
+  box-shadow:0 0 0 2px rgba(30,123,239,.28);
+}
+
+/* メイン画像 */
+.pdp-gallery__stage{position:relative;grid-column:2;grid-row:1;min-width:0}
+.pdp-gallery__frame{
+  position:relative;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--white);
+}
+.pdp-gallery__img{
+  display:block;
+  width:100%;
+  aspect-ratio:1/1;
+  object-fit:cover;
+}
+
+/* 画像上のフラグ */
+.pdp-gallery__flags{
+  position:absolute;
+  top:10px;
+  left:10px;
+  z-index:2;
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:5px;
+  pointer-events:none;
+}
+.pdp-flag{
+  padding:3px 9px;
+  border-radius:99px;
+  background:var(--red);
+  color:#fff;
+  font-size:10.5px;
+  font-weight:700;
+  letter-spacing:.04em;
+  line-height:1.6;
+}
+.pdp-flag--new{background:var(--cta)}
+
+/* 枚数カウンタ */
+.pdp-gallery__count{
+  position:absolute;
+  right:10px;
+  bottom:10px;
+  z-index:2;
+  padding:2px 9px;
+  border-radius:99px;
+  background:rgba(46,74,107,.78);
+  color:#fff;
+  font-size:10.5px;
+  font-weight:600;
+  letter-spacing:.04em;
+  pointer-events:none;
+}
+
+/* 拡大鏡（レンズ＋拡大パネル）。ホバー可能なデスクトップのみ有効 */
+.pdp-lens{
+  position:absolute;
+  top:0;
+  left:0;
+  z-index:4;
+  display:none;
+  width:172px;
+  height:172px;
+  border:1px solid var(--line-strong);
+  border-radius:var(--radius-sm);
+  background:rgba(255,255,255,.28);
+  box-shadow:0 0 0 1px rgba(255,255,255,.7) inset;
+  cursor:crosshair;
+  pointer-events:none;
+}
+.pdp-zoom{
+  position:absolute;
+  top:0;
+  left:calc(100% + 12px);
+  z-index:30;
+  display:none;
+  width:100%;
+  aspect-ratio:1/1;
+  border:1px solid var(--line-strong);
+  border-radius:var(--radius);
+  background-color:var(--white);
+  background-repeat:no-repeat;
+  box-shadow:var(--shadow);
+  pointer-events:none;
+}
+.pdp-gallery.is-zooming .pdp-lens,
+.pdp-gallery.is-zooming .pdp-zoom{display:block}
+
+/* --------------------------------------------------------------------------
+   4. 商品情報
+   -------------------------------------------------------------------------- */
+.pdp-info{display:flex;flex-direction:column;gap:11px}
+
+.pdp-info__brand{
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:.08em;
+  color:var(--muted);
+  text-transform:uppercase;
+}
+.pdp-info__brand a:hover{color:var(--cta)}
+
+.pdp-info__title{
+  margin-top:-4px;
+  font-size:clamp(19px,2.1vw,23px);
+  font-weight:700;
+  line-height:1.5;
+  letter-spacing:.01em;
+  color:var(--navy);
+}
+
+.pdp-info__meta{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:6px 14px;
+  font-size:11.5px;
+  color:var(--muted);
+}
+.pdp-rating{display:inline-flex;align-items:center;gap:6px}
+.pdp-rating .rating{font-size:13px}
+.pdp-rating b{font-size:13px;color:var(--navy)}
+.pdp-rating__link{
+  color:var(--cta);
+  text-decoration:underline;
+  text-underline-offset:2px;
+}
+.pdp-rating__link:hover{color:var(--cta-dark)}
+
+/* 価格（強調表示） */
+.pdp-price{
+  display:flex;
+  flex-wrap:wrap;
+  align-items:baseline;
+  gap:4px 9px;
+  padding:9px 12px;
+  border-radius:var(--radius);
+  background:linear-gradient(180deg,var(--blue) 0%,var(--white) 100%);
+}
+.pdp-price__now{
+  font-size:30px;
+  font-weight:800;
+  line-height:1.15;
+  letter-spacing:-.01em;
+  color:var(--navy);
+}
+.pdp-price__now small{margin-left:2px;font-size:12.5px;font-weight:600;color:var(--muted)}
+.pdp-price__was{font-size:13px;font-weight:400;color:var(--muted)}
+.pdp-price__off{
+  padding:1px 7px;
+  border-radius:var(--radius-sm);
+  background:var(--red);
+  color:#fff;
+  font-size:11px;
+  font-weight:700;
+  letter-spacing:.02em;
+}
+.pdp-price__tags{display:inline-flex;flex-wrap:wrap;gap:5px;margin-left:auto}
+
+/* Bootstrap の badge をブランドカラーで着色 */
+.pdp-badge{--bs-badge-padding-x:8px;--bs-badge-padding-y:3px;font-size:10.5px;font-weight:700;letter-spacing:.02em}
+.pdp-badge--free{background:#e8f6ee;color:#2f7d55}
+.pdp-badge--genuine{background:var(--blue-200);color:var(--brand-dark)}
+.pdp-badge--popular{background:#fdf0e6;color:#b06f28}
+
+.pdp-stock{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:#3f8f66}
+.pdp-stock span{color:var(--muted);font-weight:400}
+
+.pdp-info__lead{font-size:12.5px;line-height:1.9;color:var(--ink)}
+
+/* バリエーション選択 */
+.pdp-variants{display:flex;flex-direction:column;gap:11px;padding-top:2px}
+.pdp-variant__head{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  margin-bottom:7px;
+  font-size:11.5px;
+  font-weight:700;
+  color:var(--navy);
+}
+.pdp-variant__value{
+  padding:1px 8px;
+  border-radius:99px;
+  background:var(--bg);
+  font-size:11px;
+  font-weight:600;
+  color:var(--muted);
+}
+.pdp-variant__options{display:flex;flex-wrap:wrap;gap:7px}
+.pdp-option{
+  padding:5px 13px;
+  border:1px solid var(--line-strong);
+  border-radius:99px;
+  background:var(--white);
+  color:var(--ink);
+  font-size:12px;
+  cursor:pointer;
+  transition:border-color .16s var(--ease),background-color .16s var(--ease),color .16s var(--ease);
+}
+.pdp-option:hover{border-color:var(--cta);color:var(--cta)}
+.pdp-option.is-active{border-color:var(--cta);background:var(--cta);color:#fff}
+
+/* 数量＋購入ボタン（.qty ステッパー本体は common.css の共通コンポーネント） */
+.pdp-buy{display:flex;flex-wrap:wrap;align-items:center;gap:9px;padding-top:3px}
+
+.pdp-actions{display:flex;flex:1 1 240px;align-items:center;gap:8px;min-width:0}
+/* カート／今すぐ購入は同じサイズにする */
+.pdp-actions__cart,
+.pdp-actions__buy{
+  flex:1 1 0;
+  min-width:0;
+  padding-block:11px;
+  font-size:13px;
+}
+.pdp-actions__cart{font-weight:700}
+.pdp-actions__buy{
+  border:1px solid var(--cta);
+  background:var(--white);
+  color:var(--cta);
+  font-weight:700;
+  transition:background-color .18s var(--ease),color .18s var(--ease);
+}
+.pdp-actions__buy:hover{background:var(--cta);color:#fff}
+/* お気に入りは控えめなアイコンボタン */
+.pdp-actions__fav{
+  flex:0 0 auto;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:40px;
+  height:40px;
+  padding:0;
+  border:1px solid var(--line-strong);
+  border-radius:var(--radius-sm);
+  background:var(--white);
+  cursor:pointer;
+  transition:border-color .16s var(--ease),background-color .16s var(--ease);
+}
+.pdp-actions__fav .bi{font-size:17px;color:var(--muted)}
+.pdp-actions__fav:hover{border-color:var(--red);background:#fdf4f3}
+.pdp-actions__fav.is-on .bi{color:var(--red)}
+.pdp-actions__fav.is-on .bi::before{content:"\f415"}
+
+/* 提供サービス */
+.pdp-services{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:1px;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--line);
+}
+.pdp-service{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--white)}
+.pdp-service .bi{flex:0 0 auto;font-size:16px;color:var(--brand)}
+.pdp-service__title{font-size:11.5px;font-weight:700;color:var(--navy);line-height:1.5}
+.pdp-service__text{font-size:10.5px;line-height:1.6;color:var(--muted)}
+
+/* --------------------------------------------------------------------------
+   5. 商品詳細タブ
+   -------------------------------------------------------------------------- */
+/* タブ：枠も背景帯も使わず、中央寄せ＋下線インジケータの売り場らしい形にする */
+.pdp-tabsec{padding-block:26px 24px;background:var(--white)}
+.pdp-tabsec__inner{background:var(--white)}
+.pdp-tabs{
+  display:flex;
+  flex-wrap:nowrap;
+  justify-content:center;
+  gap:clamp(10px,4vw,54px);
+  overflow-x:auto;
+  scrollbar-width:none;
+  border-bottom:1px solid var(--line);
+}
+.pdp-tabs::-webkit-scrollbar{display:none}
+.pdp-tabs .nav-item{flex:0 0 auto}
+.pdp-tabs .nav-link{
+  position:relative;
+  padding:9px 2px 15px;
+  border:0;
+  border-radius:0;
+  background:none;
+  color:var(--muted);
+  font-size:14.5px;
+  font-weight:700;
+  letter-spacing:.01em;
+  white-space:nowrap;
+  cursor:pointer;
+  transition:color .18s var(--ease);
+}
+.pdp-tabs .nav-link::after{
+  content:"";
+  position:absolute;
+  right:50%;
+  bottom:-1px;
+  left:50%;
+  height:2px;
+  border-radius:2px;
+  background:var(--cta);
+  transition:left .24s var(--ease),right .24s var(--ease);
+}
+.pdp-tabs .nav-link:hover{color:var(--navy)}
+.pdp-tabs .nav-link.active{color:var(--navy)}
+.pdp-tabs .nav-link.active::after{right:0;left:0}
+.pdp-tabs .nav-link:focus-visible{outline-offset:-2px}
+.pdp-tabs__count{margin-left:3px;font-size:11.5px;font-weight:600;color:var(--cta)}
+
+.pdp-tabsec__content{padding:clamp(22px,3.2vw,38px) 0 4px}
+
+/* ブロック見出し：罫線1本のシンプルな見出し */
+.pdp-subtitle{
+  display:flex;
+  align-items:baseline;
+  gap:9px;
+  margin-bottom:15px;
+  padding-bottom:10px;
+  border-bottom:1px solid var(--line);
+  font-size:16px;
+  font-weight:700;
+  letter-spacing:.01em;
+  color:var(--navy);
+}
+.pdp-block + .pdp-block,
+.pdp-block--spec{margin-top:clamp(26px,3.6vw,44px)}
+
+/* 5-1. 商品の詳細（説明文の下に商品スペックを積む） */
+/* エディタ出力は折りたたまず全文表示。幅・はみ出しは common.css の .editor-content 側で制御する
+   （.pdp-desc__body はフック用のクラスで、ここでは上書きしない） */
+
+/* 5つ星（common.css のスケールに無い分を補完） */
+
+/* 商品スペック：格子ではなく行の罫線と淡いラベル列だけで見せる */
+.pdp-spec__table{
+  width:100%;
+  border-collapse:collapse;
+  border-top:1px solid var(--line);
+  font-size:12px;
+}
+.pdp-spec__table th,
+.pdp-spec__table td{
+  padding:11px clamp(12px,1.8vw,20px);
+  border-bottom:1px solid var(--line);
+  text-align:left;
+  vertical-align:top;
+  line-height:1.75;
+  overflow-wrap:anywhere;
+}
+.pdp-spec__table th{
+  width:200px;
+  background:var(--bg);
+  font-weight:700;
+  color:var(--navy);
+}
+.pdp-spec__table td{color:var(--ink)}
+.pdp-spec__note{margin-top:11px;font-size:10.5px;line-height:1.7;color:var(--muted)}
+
+/* 5-2. よくある質問（アコーディオン） */
+.pdp-faq{--bs-accordion-border-color:var(--line);--bs-accordion-border-radius:var(--radius)}
+.pdp-faq .accordion-item{border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+.pdp-faq .accordion-item + .accordion-item{margin-top:8px}
+.pdp-faq .accordion-button{
+  padding:13px 15px;
+  background:var(--white);
+  color:var(--navy);
+  font-size:12.5px;
+  font-weight:700;
+  line-height:1.6;
+  box-shadow:none;
+}
+.pdp-faq .accordion-button:not(.collapsed){background:var(--blue);color:var(--navy)}
+.pdp-faq .accordion-button::after{
+  width:14px;
+  height:14px;
+  background-size:14px;
+  opacity:.55;
+}
+.pdp-faq .accordion-button:focus{border-color:var(--line);box-shadow:0 0 0 3px rgba(30,123,239,.16)}
+.pdp-faq .accordion-body{
+  padding:12px 15px 15px;
+  border-top:1px solid var(--line);
+  font-size:12.5px;
+  line-height:1.95;
+  color:var(--ink);
+}
+.pdp-faq .accordion-body p + p{margin-top:8px}
+.pdp-faq .accordion-body a{color:var(--cta);text-decoration:underline;text-underline-offset:2px}
+
+/* 5-3. レビュー：集計 */
+.review-summary{
+  display:grid;
+  grid-template-columns:minmax(0,190px) minmax(0,1fr);
+  gap:clamp(16px,3vw,34px);
+  align-items:center;
+  padding:16px clamp(16px,2.4vw,24px);
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:linear-gradient(180deg,var(--blue) 0%,var(--white) 100%);
+}
+.review-summary__score{text-align:center}
+.review-summary__value{
+  font-size:42px;
+  font-weight:800;
+  line-height:1.05;
+  letter-spacing:-.02em;
+  color:var(--navy);
+}
+.review-summary__value small{font-size:14px;font-weight:600;color:var(--muted)}
+.review-summary__stars{margin-top:4px}
+.review-summary__stars .rating{font-size:15px}
+.review-summary__count{margin-top:5px;font-size:11.5px;color:var(--muted)}
+.review-summary__bars{display:flex;flex-direction:column;gap:6px}
+.review-bar{
+  display:grid;
+  grid-template-columns:42px minmax(0,1fr) 52px;
+  align-items:center;
+  gap:10px;
+  font-size:11.5px;
+  color:var(--muted);
+}
+.review-bar__label{display:flex;align-items:center;gap:3px;font-weight:600;color:var(--navy);white-space:nowrap}
+.review-bar__label .bi{font-size:11px;color:var(--gold)}
+.review-bar__track{height:7px;border-radius:99px;background:#dce9f6;overflow:hidden}
+.review-bar__fill{display:block;height:100%;border-radius:99px;background:var(--gold)}
+.review-bar__fill--5{width:74%}
+.review-bar__fill--4{width:18%}
+.review-bar__fill--3{width:5%}
+.review-bar__fill--2{width:2%}
+.review-bar__fill--1{width:1%}
+.review-bar__value{text-align:right;white-space:nowrap}
+
+/* 5-3. レビュー：写真リスト */
+.review-photos{margin-top:18px}
+.review-photos__rail{position:relative}
+.review-photos__viewport{
+  display:flex;
+  gap:9px;
+  padding-block:4px;
+  overflow-x:auto;
+  scroll-behavior:smooth;
+  scrollbar-width:none;
+  overscroll-behavior-x:contain;
+}
+.review-photos__viewport::-webkit-scrollbar{display:none}
+.review-photo{
+  flex:0 0 calc((100% - 45px) / 6);
+  padding:0;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:var(--radius-sm);
+  background:var(--bg);
+  cursor:zoom-in;
+  transition:border-color .16s var(--ease),transform .2s var(--ease);
+}
+.review-photo img{display:block;width:100%;aspect-ratio:1/1;object-fit:cover;transition:transform .3s var(--ease)}
+.review-photo:hover{border-color:var(--cta)}
+.review-photos__nav{
+  position:absolute;
+  top:50%;
+  z-index:2;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:30px;
+  height:30px;
+  padding:0;
+  border:1px solid var(--line);
+  border-radius:50%;
+  background:rgba(255,255,255,.95);
+  color:var(--navy);
+  cursor:pointer;
+  transform:translateY(-50%);
+  box-shadow:var(--shadow-sm);
+  transition:background-color .16s var(--ease),color .16s var(--ease),opacity .16s var(--ease);
+}
+.review-photos__nav .bi{font-size:14px}
+.review-photos__nav:hover{background:var(--cta);color:#fff}
+.review-photos__nav[disabled]{opacity:.35;cursor:default}
+.review-photos__nav[disabled]:hover{background:rgba(255,255,255,.95);color:var(--navy)}
+.review-photos__nav--prev{left:-11px}
+.review-photos__nav--next{right:-11px}
+
+/* 5-3. レビュー：一覧 */
+.review-list{margin-top:18px;border-top:1px solid var(--line)}
+.review-item{
+  display:grid;
+  grid-template-columns:158px minmax(0,1fr);
+  gap:18px;
+  padding:16px 0;
+  border-bottom:1px solid var(--line);
+}
+.review-item[hidden]{display:none}
+.review-item__user{display:flex;flex-direction:column;gap:7px}
+.review-item__avatar{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:40px;
+  height:40px;
+  border-radius:50%;
+  background:var(--blue-200);
+  color:var(--brand-dark);
+  font-size:15px;
+  font-weight:700;
+}
+.review-item__avatar--b{background:#f3e7f7;color:#8a5aa8}
+.review-item__avatar--c{background:#e9f6ef;color:#2f7d55}
+.review-item__avatar--d{background:#fdf0e6;color:#b06f28}
+.review-item__name{font-size:12.5px;font-weight:700;color:var(--navy);line-height:1.5}
+.review-item__date{font-size:11px;color:var(--muted)}
+.review-item__body{min-width:0}
+.review-item__head{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.review-item__head .rating{font-size:13px}
+.review-item__score{font-size:12px;font-weight:700;color:var(--navy)}
+.review-item__title{margin-top:7px;font-size:12.5px;font-weight:700;color:var(--navy)}
+.review-item__text{margin-top:5px;font-size:12.5px;line-height:1.95;color:var(--ink);overflow-wrap:anywhere}
+.review-item__imgs{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
+.review-item__img{
+  width:64px;
+  padding:0;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:var(--radius-sm);
+  background:var(--bg);
+  cursor:zoom-in;
+  transition:border-color .16s var(--ease);
+}
+.review-item__img img{display:block;width:100%;aspect-ratio:1/1;object-fit:cover}
+.review-item__img:hover{border-color:var(--cta)}
+.review-item__tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.review-tag{
+  padding:2px 9px;
+  border-radius:99px;
+  background:var(--blue);
+  color:var(--brand-dark);
+  font-size:10.5px;
+  font-weight:600;
+}
+.review-tag--repeat{background:#fdf0e6;color:#b06f28}
+.review-tag--recommend{background:#e8f6ee;color:#2f7d55}
+.review-list__foot{display:flex;justify-content:center;margin-top:16px}
+.review-list__more{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:9px 22px;
+  border:1px solid var(--line-strong);
+  border-radius:99px;
+  background:var(--white);
+  color:var(--navy);
+  font-size:12px;
+  font-weight:700;
+  cursor:pointer;
+  transition:border-color .16s var(--ease),color .16s var(--ease);
+}
+.review-list__more:hover{border-color:var(--cta);color:var(--cta)}
+.review-list__more .bi{font-size:12px}
+.review-list__more[aria-expanded="true"] .bi{transform:rotate(180deg)}
+
+/* レビュー写真の拡大モーダル（.photo-lightbox）は common.css の共通部品を使う */
+
+/* --------------------------------------------------------------------------
+   6. 関連商品（この商品を買った人はこちらも購入しています）
+   -------------------------------------------------------------------------- */
+.pdp-related .product-card__name{font-size:12px}
+
+/* --------------------------------------------------------------------------
+   7. レスポンシブ
+   -------------------------------------------------------------------------- */
+@media (max-width:1199px){
+  .pdp-price__tags{margin-left:0}
+  .review-photo{flex:0 0 calc((100% - 27px) / 4)}
+}
+
+@media (max-width:991px){
+  /* ギャラリーは「メイン画像 → サムネイル横並び」に切り替え */
+  .pdp-gallery{grid-template-columns:minmax(0,1fr);gap:9px}
+  .pdp-gallery__rail{position:static;width:auto;grid-column:1;grid-row:2}
+  .pdp-gallery__stage{grid-column:1;grid-row:1}
+  /* 横並びのときは上下ボタン不要（横スクロールで送れる） */
+  .pdp-gallery__nav{display:none}
+  .pdp-gallery__thumbs{
+    flex-direction:row;
+    gap:7px;
+    padding-bottom:2px;
+    overflow-x:auto;
+    overflow-y:hidden;
+    scrollbar-width:none;
+  }
+  .pdp-gallery__thumbs::-webkit-scrollbar{display:none}
+  .pdp-gallery__thumb{flex:0 0 60px;width:60px}
+  /* タッチ端末では拡大鏡を使わない */
+  .pdp-lens,.pdp-zoom{display:none !important}
+  .review-item{grid-template-columns:minmax(0,1fr);gap:10px}
+  .review-item__user{flex-direction:row;align-items:center;gap:10px}
+}
+
+@media (max-width:767px){
+  .pdp-price__now{font-size:26px}
+  .pdp-spec__table th{width:38%}
+  .pdp-services{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .pdp-service{flex-direction:column;text-align:center;gap:5px;padding:10px 8px}
+  .pdp-service .bi{font-size:17px}
+  .review-summary{grid-template-columns:minmax(0,1fr);gap:14px}
+  .review-summary__score{text-align:left}
+  .review-photo{flex:0 0 calc((100% - 18px) / 3)}
+}
+
+@media (max-width:575px){
+  .pdp-actions{flex:1 1 100%}
+  .review-photo{flex:0 0 calc((100% - 9px) / 2)}
+  .review-bar{grid-template-columns:38px minmax(0,1fr) 46px;gap:8px}
+}
+
+/* 拡大鏡は「ホバーできるデスクトップ」でのみ動かす */
+@media (hover:none){
+  .pdp-lens,.pdp-zoom{display:none !important}
+}

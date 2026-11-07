@@ -1,0 +1,160 @@
+@charset "UTF-8";
+/* ==========================================================================
+   home.css — トップページ固有スタイル
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   1. 第4欄：バナーカルーセル（Slick）＋ 特集タイル
+   -------------------------------------------------------------------------- */
+.hero{padding-block:14px}
+
+.hero__slider{position:relative;overflow:hidden;border-radius:var(--radius);background:var(--bg)}
+/* Slick初期化前のレイアウト崩れを防ぐ（1枚目のみ表示） */
+.hero__slider:not(.slick-initialized) > div:not(:first-child){display:none}
+.hero__slider .slick-slide img{width:100%;aspect-ratio:649/400;object-fit:cover}
+/* 矢印・ドットは common.css の .slider（共通スライダー部品）を使う
+   ヒーロー固有の調整だけをここに置く */
+
+/* 右側：特集タイル */
+.hero__themes{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:var(--gap);height:100%}
+.hero__theme{position:relative;display:block;overflow:hidden;border-radius:var(--radius);background:var(--bg)}
+.hero__theme img{width:100%;height:100%;object-fit:cover}
+
+/* --------------------------------------------------------------------------
+   2. 第5欄・第13欄：サービス情報
+   -------------------------------------------------------------------------- */
+.services{padding-block:0}
+.services__card{
+  padding:15px 18px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--blue);
+}
+.services__card--light{background:var(--white)}
+.service{display:flex;gap:10px;padding:2px 14px;border-left:1px solid var(--line-strong)}
+.row > .col:first-child .service{border-left:0;padding-left:0}
+.service__icon{flex:0 0 auto;font-size:24px;color:var(--cta)}
+.service__title{font-size:12.5px;font-weight:700;color:var(--navy)}
+.service__text{margin-top:2px;font-size:10.5px;line-height:1.55;color:var(--muted)}
+
+/* --------------------------------------------------------------------------
+   3. 第6欄：カテゴリー
+   -------------------------------------------------------------------------- */
+.category-card{
+  display:block;
+  height:100%;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--white);
+  transition:border-color .2s var(--ease);
+}
+.category-card:hover{border-color:var(--line-strong)}
+.category-card__media{display:block;overflow:hidden}
+.category-card__media img{width:100%;aspect-ratio:427/264;object-fit:cover}
+.category-card__body{display:block;padding:11px 13px 13px}
+.category-card__name{display:block;font-size:13.5px;font-weight:700;color:var(--navy)}
+.category-card__text{display:block;margin-top:3px;font-size:11px;line-height:1.55;color:var(--muted)}
+
+/* --------------------------------------------------------------------------
+   4. 第8〜10欄・第12欄：横スクロール
+   -------------------------------------------------------------------------- */
+.rail__wrap{position:relative}
+.rail__viewport{
+  display:grid;
+  grid-auto-flow:column;
+  grid-auto-columns:calc((100% - var(--gap) * 4) / 5);
+  gap:var(--gap);
+  overflow-x:auto;
+  scroll-snap-type:x mandatory;
+  scrollbar-width:none;
+  padding-bottom:2px;
+}
+.rail__viewport--blog{grid-auto-columns:calc((100% - var(--gap) * 3) / 4)}
+.rail__viewport::-webkit-scrollbar{display:none}
+.rail__viewport > *{scroll-snap-align:start}
+.rail__nav{
+  position:absolute;
+  top:38%;
+  z-index:3;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:38px;
+  height:38px;
+  padding:0;
+  border:0;
+  border-radius:50%;
+  background:var(--white);
+  box-shadow:var(--shadow);
+  cursor:pointer;
+  transition:background .18s var(--ease),opacity .18s var(--ease);
+}
+.rail__nav:hover{background:var(--blue)}
+.rail__nav .bi{font-size:15px;color:var(--navy)}
+.rail__nav--prev{left:-14px}
+.rail__nav--next{right:-14px}
+.rail__nav[disabled]{opacity:.3;cursor:default}
+
+/* --------------------------------------------------------------------------
+   5. 第11欄：ブランド
+   -------------------------------------------------------------------------- */
+.brand-card{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  height:72px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--white);
+  transition:border-color .2s var(--ease);
+}
+.brand-card:hover{border-color:var(--cta)}
+.brand-card img{width:104px;height:38px;object-fit:contain}
+
+/* --------------------------------------------------------------------------
+   6. 第12欄：ブログカード
+   -------------------------------------------------------------------------- */
+.post-card{
+  display:block;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:var(--white);
+  transition:border-color .2s var(--ease);
+}
+.post-card:hover{border-color:var(--line-strong)}
+.post-card__media{display:block;overflow:hidden}
+.post-card__media img{width:100%;aspect-ratio:16/10;object-fit:cover}
+.post-card__body{display:block;padding:11px 13px 13px}
+.post-card__meta{display:flex;align-items:center;gap:9px;font-size:10.5px;color:var(--muted)}
+.post-card__tag{padding:1px 7px;border-radius:3px;background:var(--blue);color:var(--navy);font-weight:600}
+.post-card__title{display:block;margin-top:6px;font-size:12.5px;font-weight:700;line-height:1.5;color:var(--ink)}
+
+/* --------------------------------------------------------------------------
+   7. レスポンシブ（トップページ）
+   -------------------------------------------------------------------------- */
+@media (max-width:1199px){
+  .rail__viewport{grid-auto-columns:calc((100% - var(--gap) * 3) / 4)}
+  .rail__viewport--blog{grid-auto-columns:calc((100% - var(--gap) * 2) / 3)}
+}
+
+@media (max-width:991px){
+  .services__card{padding:12px 16px}
+  .service{padding:8px 14px}
+  .row > .col:first-child .service{border-left:1px solid var(--line-strong);padding-left:14px}
+  .row > .col:nth-child(odd) .service{border-left:0;padding-left:0}
+  .row > .col:nth-child(n+3) .service{border-top:1px solid var(--line-strong);padding-top:12px}
+  .rail__viewport{grid-auto-columns:calc((100% - var(--gap) * 2) / 3)}
+  .rail__viewport--blog{grid-auto-columns:calc((100% - var(--gap)) / 2)}
+  .rail__nav{display:none}
+}
+
+@media (max-width:767px){
+  .hero__themes{grid-template-columns:1fr 1fr}
+  .row > .col .service{border-left:0;padding-left:0;border-top:1px solid var(--line-strong);padding-top:10px}
+  .row > .col:first-child .service{border-top:0;padding-top:0}
+  .row > .col:nth-child(n+3) .service{padding-top:10px}
+  .rail__viewport{grid-auto-columns:calc((100% - var(--gap)) / 2)}
+  .rail__viewport--blog{grid-auto-columns:85%}
+}

@@ -1,0 +1,315 @@
+<?php
+
+namespace FluentCrm\App\Services\Funnel\Triggers;
+
+use FluentCrm\App\Services\Funnel\BaseTrigger;
+use FluentCrm\App\Services\Funnel\FunnelHelper;
+use FluentCrm\App\Services\Funnel\FunnelProcessor;
+use FluentCrm\Framework\Support\Arr;
+use FluentForm\App\Modules\Form\FormFieldsParser;
+use FluentForm\App\Services\FormBuilder\ShortCodeParser;
+
+class FluentFormSubmissionTrigger extends BaseTrigger
+{
+    public function __construct()
+    {
+        if (!defined('FLUENTFORM')) {
+            return;
+        }
+
+
+        $this->actionArgNum = 3;
+        $this->triggerName = 'fluentform_submission_inserted';
+        $this->priority = 25;
+        parent::__construct();
+    }
+
+    public function getTrigger()
+    {
+        return [
+            'category'    => __('Fluent Forms', 'fluent-crm'),
+            'label'       => __('New Form Submission (Fluent Forms)', 'fluent-crm'),
+            'description' => __('This automation will start when a form is submitted', 'fluent-crm'),
+            'icon'        => 'fc-icon-fluentforms',
+        ];
+    }
+
+    public function getFunnelSettingsDefaults()
+    {
+        return [
+            'form_id'             => '',
+            'primary_fields'      => [
+                'first_name' => '',
+                'last_name'  => '',
+                'email'      => ''
+            ],
+            'other_fields'        => [
+                [
+                    'field_key'   => '',
+                    'field_value' => ''
+                ]
+            ],
+            'subscription_status' => 'subscribed'
+        ];
+    }
+
+    public function getSettingsFields($funnel)
+    {
+        $valueOptions = $this->getValueOptions($funnel);
+
+        // The subtitle is rendered as HTML (v-html), so only a validated numeric id may reach it.
+        $formId = $this->getSelectedFormId($funnel);
+
+        $subtitle = __('This automation will start when a form is submitted.', 'fluent-crm');
+
+        if ($formId) {
+            $subtitle .= ' ' . sprintf(
+                /* translators: %1$s: form shortcode, %2$s: opening link tag to the form editor, %3$s: closing link tag */
+                __('Use shortcode %1$s to show the form on your WordPress pages or posts. %2$sEdit the form%3$s', 'fluent-crm'),
+                '<b> [fluentform id="' . $formId . '"] </b>',
+                '<a target="_blank" href="' . esc_url(admin_url('admin.php?page=fluent_forms&route=editor&form_id=' . $formId)) . '">',
+                '</a>'
+            );
+        }
+
+        $secondaryFields = apply_filters('fluent_crm/fluentform_other_map_fields',
+            FunnelHelper::getSecondaryContactFieldMaps()
+        );
+
+        return [
+            'title'     => __('New Fluent Forms Submission Automation', 'fluent-crm'),
+            'sub_title' => $subtitle,
+            'fields'    => [
+                'form_id'                  => [
+                    'type'    => 'reload_field_selection',
+                    'label'   => __('Select your form', 'fluent-crm'),
+                    'options' => $this->getForms($funnel)
+                ],
+                'primary_fields'           => [
+                    'label'         => __('Map Primary Data', 'fluent-crm'),
+                    'type'          => 'form-group-mapper',
+                    'value_options' => $valueOptions,
+                    'local_label'   => __('Contact Field (CRM)', 'fluent-crm'),
+                    'remote_label'  => __('Form Field', 'fluent-crm'),
+                    'fields'        => FunnelHelper::getPrimaryContactFieldMaps()
+                ],
+                'other_fields'             => [
+                    'label'              => __('Map Other Data', 'fluent-crm'),
+                    'type'               => 'form-many-drop-down-mapper',
+                    'value_options'      => $valueOptions,
+                    'local_label'        => __('Select Contact Property', 'fluent-crm'),
+                    'remote_label'       => __('Select Form Field', 'fluent-crm'),
+                    'local_placeholder'  => __('Select Contact Property', 'fluent-crm'),
+                    'remote_placeholder' => __('Select Form Property', 'fluent-crm'),
+                    'fields'             => $secondaryFields
+                ],
+                'subscription_status'      => [
+                    'type'        => 'select',
+                    'is_multiple' => false,
+                    'options' => [
+                        [
+                            'id' => 'subscribed',
+                            'title' => 'Subscribed'
+                        ],
+                        [
+                            'id' => 'pending',
+                            'title' => 'Pending'
+                        ]
+                    ],
+                    'label'       => __('Subscription Status', 'fluent-crm'),
+                    'placeholder' => __('Select status', 'fluent-crm')
+                ],
+                'subscription_status_info' => [
+                    'type'       => 'html',
+                    'info'       => '<b>An Automated double-optin email will be sent if the contact is new or not subscribed already</b>',
+                    'dependency' => [
+                        'depends_on' => 'subscription_status',
+                        'operator'   => '=',
+                        'value'      => 'pending'
+                    ]
+                ]
+            ]
+        ];
+    }
+
+    protected function getForms($funnel)
+    {
+        return fluentCrmDb()->table('fluentform_forms')
+            ->select('id', 'title')
+            ->orderBy('id', 'DESC')
+            ->get();
+    }
+
+    /**
+     * The automation's selected form id, or 0 when none is set or the stored value is not a whole
+     * positive number.
+     *
+     * form_id is stored as given, including from an imported automation file. A malformed value such
+     * as "7bad" must mean "no form" everywhere: cast to int it would show form 7 in the editor (and
+     * MySQL would match it to form 7), while submissions from form 7 would never start it.
+     *
+     * @param object $funnel
+     * @return int
+     */
+    protected function getSelectedFormId($funnel)
+    {
+        $formId = Arr::get((array)$funnel->settings, 'form_id');
+
+        if (is_int($formId)) {
+            return max(0, $formId);
+        }
+
+        return (is_string($formId) && ctype_digit($formId)) ? (int)$formId : 0;
+    }
+
+    protected function getValueOptions($funnel)
+    {
+        $formId = $this->getSelectedFormId($funnel);
+        if (!$formId) {
+            return [];
+        }
+
+        $form = fluentCrmDb()->table('fluentform_forms')
+            ->find($formId);
+
+        if(!$form) {
+            return [];
+        }
+
+        $formFields = FormFieldsParser::getShortCodeInputs(
+            $form, [
+            'admin_label'
+        ]);
+
+        $formattedInputs = [];
+
+        foreach ($formFields as $inputKey => $input) {
+            $formattedInputs[] = [
+                'id'    => '{inputs.' . $inputKey . '}',
+                'title' => $input['admin_label']
+            ];
+        }
+
+        return $formattedInputs;
+    }
+
+    public function getFunnelConditionDefaults($funnel)
+    {
+        return [
+            'update_type'  => 'update',
+            'run_only_one' => 'yes'
+        ];
+    }
+
+    public function getConditionFields($funnel)
+    {
+        return [
+            'update_type'  => [
+                'type'    => 'radio',
+                'label'   => __('If the contact already exists', 'fluent-crm'),
+                'help'    => __('Choose what happens if the contact already exists.', 'fluent-crm'),
+                'options' => FunnelHelper::getUpdateOptions()
+            ],
+            'run_only_one' => [
+                'type'        => 'yes_no_check',
+                'label'       => '',
+                'check_label' => __('Run this automation only once per contact. If unchecked, it will overwrite the existing flow', 'fluent-crm'),
+                'help'        => __('If enabled, it will run only once per contact. Otherwise, it will delete the existing automation flow and start a new one', 'fluent-crm'),
+                'options'     => FunnelHelper::getUpdateOptions()
+            ],
+        ];
+    }
+
+    public function handle($funnel, $originalArgs)
+    {
+        $insertId = $originalArgs[0];
+        $formData = $originalArgs[1];
+        $form = $originalArgs[2];
+
+        $processedValues = $funnel->settings;
+
+        $formId = $this->getSelectedFormId($funnel);
+        if (!$formId || $formId !== (int)$form->id) {
+            return; // no valid form selected, or not our form
+        }
+
+        // Automations saved before update_type existed run with the defaults ("Update if Exists").
+        $funnel->conditions = wp_parse_args((array)$funnel->conditions, $this->getFunnelConditionDefaults($funnel));
+
+        $processedValues['primary_fields']['ip'] = '{submission.ip}';
+
+        $processedValues = ShortCodeParser::parse($processedValues, $insertId, $formData);
+
+        if (!is_email(Arr::get($processedValues, 'primary_fields.email'))) {
+            return;
+        }
+
+        $subscriberData = Arr::get($processedValues, 'primary_fields', []);
+
+        $subscriberData['custom_values'] = [];
+
+        foreach (Arr::get($processedValues, 'other_fields', []) as $otherField) {
+            if (!empty($otherField['field_key']) && !empty($otherField['field_value'])) {
+                $key = $otherField['field_key'];
+                if (strpos($key, '.') !== false) {
+                    $subscriberData['custom_values'][str_replace('custom.', '', $key)] = $otherField['field_value'];
+                } else {
+                    $subscriberData[$key] = $otherField['field_value'];
+                }
+            }
+        }
+
+        $willProcess = $this->isProcessable($funnel, $subscriberData);
+
+        $willProcess = apply_filters('fluentcrm_funnel_will_process_' . $this->triggerName, $willProcess, $funnel, $subscriberData, $originalArgs);
+        if (!$willProcess) {
+            return;
+        }
+
+        $subscriberData['status'] = $processedValues['subscription_status'];
+
+        $entry = fluentFormApi('submissions')->find($insertId);
+
+        if ($entry && $entry->status == 'confirmed') {
+            $subscriberData['status'] = 'subscribed';
+        }
+
+        if (!empty($subscriberData['country'])) {
+            $country = FunnelHelper::getCountryShortName($subscriberData['country']);
+            if ($country) {
+                $subscriberData['country'] = $country;
+            } else {
+                unset($subscriberData['country']);
+            }
+        }
+
+        (new FunnelProcessor())->startFunnelSequence($funnel, $subscriberData, [
+            'source_trigger_name' => $this->triggerName,
+            'source_ref_id'       => $insertId,
+        ]);
+
+    }
+
+    private function isProcessable($funnel, $subscriberData)
+    {
+        $subscriber = FunnelHelper::getSubscriber($subscriberData['email']);
+        if ($subscriber && Arr::get($funnel->conditions, 'update_type') == 'skip_all_if_exist') {
+            return false;
+        }
+
+        if ($subscriber && FunnelHelper::ifAlreadyInFunnel($funnel->id, $subscriber->id)) {
+            $conditions = $funnel->conditions;
+            // check update_type
+            $runMultiple = Arr::get($conditions, 'run_only_one') == 'no';
+
+            // if run multiple then delete
+            if ($runMultiple) {
+                FunnelHelper::removeSubscribersFromFunnel($funnel->id, [$subscriber->id]);
+            }
+
+            return $runMultiple;
+        }
+
+        return true;
+    }
+}
