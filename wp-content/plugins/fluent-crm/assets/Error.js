@@ -1,1 +1,0 @@
-import{a0 as r,a1 as o,af as e,ad as s}from"./vendor.js?ver=3.3.1";import{_ as a}from"./fc-bits-ui.js?ver=3.3.1";const n={key:0,class:"el-form-item__error"};const t=a({name:"Error",props:["error"]},[["render",function(a,t,m,f,i,p){return m.error?(r(),o("span",n,e(m.error),1)):s("",!0)}]]);export{t as E};
