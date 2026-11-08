@@ -74,6 +74,7 @@ function woocommerce_cooder_init()
             add_action('woocommerce_update_options_payment_gateways',              array(&$this, 'process_admin_options'));
             add_action('woocommerce_update_options_payment_gateways_' . $this->id, array(&$this, 'process_admin_options'));
             add_action('woocommerce_api_' . strtolower(get_class($this)), array(&$this, 'cooder_result'));
+            add_filter('woocommerce_credit_card_form_fields', array(&$this, 'credit_card_form_fields'), 10, 2);
         }
 
 
@@ -87,6 +88,31 @@ function woocommerce_cooder_init()
 
             if ($this->enabled == 'no')
                 return;
+        }
+
+        /**
+         * Mark card fields as required and expose a visible red required label.
+         *
+         * @param array  $fields Credit card fields.
+         * @param string $gateway_id Gateway ID.
+         * @return array
+         */
+        public function credit_card_form_fields($fields, $gateway_id)
+        {
+            if ($this->id !== $gateway_id) {
+                return $fields;
+            }
+
+            foreach ($fields as $key => $field) {
+                if (false === strpos((string) $field, 'cooder-card-')) {
+                    continue;
+                }
+                $field = preg_replace('/<input /', '<input required="required" aria-required="true" ', (string) $field, 1);
+                $field = str_replace('<span class="required">*</span>', '<span class="required">必須</span>', (string) $field);
+                $fields[$key] = $field;
+            }
+
+            return $fields;
         }
 
         /**
@@ -266,150 +292,9 @@ function woocommerce_cooder_init()
             // Use Cooder CURL API for payment
             try {
 
-                // Grab Credit Fields
-                $card_number    = isset($_POST['cooder-card-number']) ? woocommerce_clean($_POST['cooder-card-number']) : '';
-                $card_number = str_replace(" ", "", $card_number);
-                $card_csc       = isset($_POST['cooder-card-cvc']) ? woocommerce_clean($_POST['cooder-card-cvc']) : '';
-                $card_csc = str_replace(" ", "", $card_csc);
-                $card_expiry    = isset($_POST['cooder-card-expiry']) ? woocommerce_clean($_POST['cooder-card-expiry']) : '';
-                $card_expiry = str_replace(" ", "", $card_expiry);
-                $card_expirys = explode("/", $card_expiry);
-                $card_exp_month = $card_expirys[0];
-                $card_exp_year  = $card_expirys[1];
-
-                $vga = isset($_POST['card-vga']) ? woocommerce_clean($_POST['card-vga']) : '';
-                $timezone = isset($_POST['card-timezone']) ? woocommerce_clean($_POST['card-timezone']) : '';
-
-                if (strlen($card_exp_year) == 2) $card_exp_year = "20" . $card_exp_year;
-                if (strlen($card_exp_year) != 4) {
-                    throw new Exception(__('Expiry Year Format Error.', 'wc_gateway_cooder'));
-                }
-                $order_comments = isset($_POST['order_comments']) ? woocommerce_clean($_POST['order_comments']) : '';
-                $CardholderLocalTime = isset($_POST['pay_time']) ? woocommerce_clean($_POST['pay_time']) : '';
-
-                // 从结账页隐藏字段获取浏览器指纹 SID（由 envProfiler.js 注入）
-                $cooderSid = isset($_POST['cooder-sid']) ? woocommerce_clean($_POST['cooder-sid']) : '';
-
-                // 货物信息
-                $GoodListInfo = array();
-                //				foreach($order->get_items() as $item){
-                //					$_products = $item->get_product();
-                //					$GoodListInfo[] = $item->get_quantity().'||'.$item->get_total().'||'.$_products->get_name(); 
-                //				}
-                foreach ($order->get_items() as $key => $item) {
-                    $_products = $item->get_product();
-                    $product = apply_filters('woocommerce_order_item_product', $order->get_product_from_item($item), $item);
-                    $option_name = $_products->get_attributes();
-                    $selectedOptionNameAndValue = '';
-                    foreach ($option_name as $k => $v) {
-                        $selectedOptionNameAndValue .= $k . ':' . wc_get_order_item_meta($key, $k) . ';';
-                    }
-                    $image_url = wp_get_attachment_url($product->get_image_id());
-                    $product_url = get_permalink($product->get_id());
-                    $GoodListInfo[] = $item->get_quantity() . '||' . $item->get_total() . '||' . $_products->get_name() . '--' . $selectedOptionNameAndValue . '||image--' . $image_url . '||product_url--' .
-					$product_url;
-					$GoodListName = $_products->get_name();
-                }
-
-                $GoodsStr = implode('###', $GoodListInfo);
-
-                $BillFirstName = version_compare(WC_VERSION, '3.0.0', '<') ? $order->billing_first_name : $order->get_billing_first_name();
-                $BillLastName = version_compare(WC_VERSION, '3.0.0', '<') ? $order->billing_last_name : $order->get_billing_last_name();
-                $BillAddress = (version_compare(WC_VERSION, '3.0.0', '<') ? $order->billing_address_1 : $order->get_billing_address_1()) . ' ' . (version_compare(WC_VERSION, '3.0.0', '<') ? $order->billing_address_2 : $order->get_billing_address_2());
-                $BillCity = version_compare(WC_VERSION, '3.0.0', '<') ? $order->billing_city : $order->get_billing_city();
-                $BillState = version_compare(WC_VERSION, '3.0.0', '<') ? $order->billing_state : $order->get_billing_state();
-                $BillCountry = version_compare(WC_VERSION, '3.0.0', '<') ? $order->billing_country : $order->get_billing_country();
-                $BillZip = version_compare(WC_VERSION, '3.0.0', '<') ? $order->billing_postcode : $order->get_billing_postcode();
-
-                $ShipFirstName = version_compare(WC_VERSION, '3.0.0', '<') ? $order->shipping_first_name : $order->get_shipping_first_name();
-                $ShipLastName = version_compare(WC_VERSION, '3.0.0', '<') ? $order->shipping_last_name : $order->get_shipping_last_name();
-                $ShipAddress = (version_compare(WC_VERSION, '3.0.0', '<') ? $order->shipping_address_1 : $order->get_shipping_address_1()) . ' ' . (version_compare(WC_VERSION, '3.0.0', '<') ? $order->shipping_address_2 : $order->get_shipping_address_2());
-                $ShipCity = version_compare(WC_VERSION, '3.0.0', '<') ? $order->shipping_city : $order->get_shipping_city();
-                $ShipState = version_compare(WC_VERSION, '3.0.0', '<') ? $order->shipping_state : $order->get_shipping_state();
-                $ShipCountry = version_compare(WC_VERSION, '3.0.0', '<') ? $order->shipping_country : $order->get_shipping_country();
-                $ShipZip = version_compare(WC_VERSION, '3.0.0', '<') ? $order->shipping_postcode : $order->get_shipping_postcode();
-
-                $ShipFirstName = $ShipFirstName == "" ? $BillFirstName : $ShipFirstName;
-                $ShipLastName = $ShipLastName == "" ? $BillLastName : $ShipLastName;
-                $ShipAddress = trim($ShipAddress) == "" ? $BillAddress : $ShipAddress;
-                $ShipCity = $ShipCity == "" ? $BillCity : $ShipCity;
-                $ShipState = $ShipState == "" ? $BillState : $ShipState;
-                $ShipCountry = $ShipCountry == "" ? $BillCountry : $ShipCountry;
-                $ShipZip = $ShipZip == "" ? $BillZip : $ShipZip;
-
-                //固定字段
-
-                $IPAddress = $this->getClient_ip();
-
-                $SignInfo = md5($order->get_order_number() . $this->api_terno . $order->get_currency() . $order->get_total() . $IPAddress . '' . '' . '' . '' . $this->api_privatekey);
-
-
-                $version = '1.0.0';
-                $encoding = 'utf-8';
-                $Language = 'en-us';
-                $orderdate = date('YmdHis');
-                $remark2 = '';
-                $remark3 = '';
-                $productname1 = $GoodListName;
-                $productsn1 = '1';
-                $quantity1 = '1';
-                $unit1 = '1';
-                $shippingfee = '1';
-
-                $signature = md5($this->api_privatekey . "|" . $this->api_merno . "|" . $orderdate . "|" . $order->get_order_number() . "|" . $order->get_total());
-
-                $process_button_string = "currency=" . $order->get_currency() .
-                    "&merchantcert=" . $this->api_privatekey .
-                    "&version=" . $version .
-                    "&encoding=" . $encoding .
-                    "&language=" . $Language .
-                    "&merchantid=" . $this->api_merno .
-                    "&orderid=" . $order->get_order_number() .
-                    "&orderdate=" . $orderdate .
-                    "&cvv=" . $card_csc .
-                    "&callbackurl=" . add_query_arg('wc-api', get_class($this), home_url('/')) .
-                    "&browserbackurl=" . $this->get_return_url() .
-                    "&cardtype=" . $this->kaleixing($card_number) .
-                    "&expdate=" . $card_exp_year . $card_exp_month .
-                    "&transtype=" . 'ic' .
-                    "&orderamount=" . $order->get_total() .
-                    "&accessurl=" . $_SERVER['HTTP_HOST'] .
-                    "&remark1=" . $IPAddress .
-                    "&remark2=" . $remark2 .
-                    "&remark3=" . $remark3 .
-                    "&productname1=" . $productname1 .
-                    "&productsn1=" . $productsn1 .
-                    "&quantity1=" . $quantity1 .
-                    "&unit1=" . $unit1 .
-                    "&shippingfee=" . $shippingfee .
-                    "&billaddress=" . $BillAddress .
-                    "&billcountry=" . $BillCountry .
-                    "&billprovince=" . $BillState .
-                    "&billcity=" . $BillCity .
-                    "&billemail=" . (version_compare(WC_VERSION, '3.0.0', '<') ? $order->billing_email : $order->get_billing_email()) .
-                    "&billphone=" . (version_compare(WC_VERSION, '3.0.0', '<') ? $order->billing_phone : $order->get_billing_phone()) .
-                    "&billpost=" . $BillZip .
-                    "&cardnum=" . $card_number .
-                    "&transmode=" . '' .
-                    "&payurl=" . '' .
-                    "&signature=" . $signature .
-                    "&deliveryfirstname=" . $ShipFirstName .
-                    "&deliverylastname=" . $ShipLastName .
-                    "&deliveryemail=" . (version_compare(WC_VERSION, '3.0.0', '<') ? $order->billing_email : $order->get_billing_email()) .
-                    "&deliveryphone=" . (version_compare(WC_VERSION, '3.0.0', '<') ? $order->billing_phone : $order->get_billing_phone()) .
-                    "&deliverypost=" . $ShipZip .
-                    "&deliveryaddress=" . $ShipAddress .
-                    "&deliverycity=" . $ShipCity .
-                    "&deliveryprovince=" . $ShipState .
-                    "&deliverycountry=" . $ShipCountry .
-                    "&sid=" . $cooderSid;
-
-                    $card_info = $order->get_payment_card_info();
-                    var_dump( $card_info );exit;
-                    var_dump( $process_button_string );exit;
-
-
-                // Build the HTTP request   $this->api_url
+                $card_data     = $this->get_posted_card_data();
+                $request_fields = $this->build_gateway_request_fields($order, $card_data);
+                $process_button_string = http_build_query($request_fields, '', '&', PHP_QUERY_RFC1738);
 
                 $response = $this->cooder_request2($process_button_string, $this->api_url);
 
@@ -488,6 +373,221 @@ function woocommerce_cooder_init()
             }
         }
 
+        /**
+         * Read and validate card fields posted by WooCommerce checkout.
+         *
+         * @return array
+         * @throws Exception When a required card field is missing or malformed.
+         */
+        private function get_posted_card_data()
+        {
+            $card_number = isset($_POST['cooder-card-number'])
+                ? preg_replace('/\D+/', '', wp_unslash($_POST['cooder-card-number']))
+                : '';
+            $card_csc = isset($_POST['cooder-card-cvc'])
+                ? preg_replace('/\D+/', '', wp_unslash($_POST['cooder-card-cvc']))
+                : '';
+            $card_expiry = isset($_POST['cooder-card-expiry'])
+                ? preg_replace('/\s+/', '', sanitize_text_field(wp_unslash($_POST['cooder-card-expiry'])))
+                : '';
+
+            if (!preg_match('/^\d{12,20}$/', $card_number)) {
+                throw new Exception(__('カード番号を正しく入力してください。', 'wc_gateway_cooder'));
+            }
+            if (!preg_match('/^\d{3,5}$/', $card_csc)) {
+                throw new Exception(__('セキュリティコードを正しく入力してください。', 'wc_gateway_cooder'));
+            }
+            if (!preg_match('/^(\d{1,2})\/(\d{2}|\d{4})$/', $card_expiry, $expiry_parts)) {
+                throw new Exception(__('有効期限を正しく入力してください。', 'wc_gateway_cooder'));
+            }
+
+            $card_exp_month = (int) $expiry_parts[1];
+            $card_exp_year = (int) $expiry_parts[2];
+            if ($card_exp_year < 100) {
+                $card_exp_year += 2000;
+            }
+            if ($card_exp_month < 1 || $card_exp_month > 12) {
+                throw new Exception(__('有効期限の月を正しく入力してください。', 'wc_gateway_cooder'));
+            }
+
+            $expdate = (string) $card_exp_year . str_pad((string) $card_exp_month, 2, '0', STR_PAD_LEFT);
+            if ($expdate < date('Ym')) {
+                throw new Exception(__('カードの有効期限が切れています。', 'wc_gateway_cooder'));
+            }
+
+            return array(
+                'number' => $card_number,
+                'cvv' => $card_csc,
+                'expdate' => $expdate,
+                'type' => $this->kaleixing($card_number),
+            );
+        }
+
+        /**
+         * Build the DOOPSUN V2.0 form fields.
+         *
+         * Card values are sent only in the request body and are never logged or stored.
+         *
+         * @param WC_Order $order Order.
+         * @param array    $card_data Validated card data.
+         * @return array
+         */
+        private function build_gateway_request_fields($order, $card_data)
+        {
+            $order_id = (string) $order->get_id();
+            if (!preg_match('/^[A-Za-z0-9]{1,20}$/', $order_id)) {
+                throw new Exception(__('注文番号がDOOPSUNの形式に適合していません。', 'wc_gateway_cooder'));
+            }
+
+            $order_date = date('YmdHis');
+            $order_amount = $this->format_gateway_amount($order->get_total());
+            $shipping_fee = $this->format_gateway_amount(
+                (float) $order->get_shipping_total() + (float) $order->get_shipping_tax()
+            );
+            $billing_email = (string) $order->get_billing_email();
+            $billing_phone = (string) $order->get_billing_phone();
+            $billing_address = trim($order->get_billing_address_1() . ' ' . $order->get_billing_address_2());
+            $shipping_address = trim($order->get_shipping_address_1() . ' ' . $order->get_shipping_address_2());
+            $shipping_first_name = $order->get_shipping_first_name() ?: $order->get_billing_first_name();
+            $shipping_last_name = $order->get_shipping_last_name() ?: $order->get_billing_last_name();
+
+            $fields = array(
+                'version' => '1.0.0',
+                'encoding' => 'utf-8',
+                'language' => 'ja-jp',
+                'merchantid' => (string) $this->api_merno,
+                'orderid' => $order_id,
+                'orderdate' => $order_date,
+                'currency' => strtoupper((string) $order->get_currency()),
+                'orderamount' => $order_amount,
+                'transtype' => 'ic',
+                'callbackurl' => add_query_arg('wc-api', get_class($this), home_url('/')),
+                'browserbackurl' => $this->get_return_url($order),
+                'accessurl' => home_url('/'),
+                'remark1' => mb_substr($this->getClient_ip(), 0, 20),
+                'remark2' => mb_substr((string) $order->get_customer_note(), 0, 20),
+                'remark3' => '',
+                'shippingfee' => $shipping_fee,
+                'merchantcert' => (string) $this->api_privatekey,
+                'transmode' => '0',
+            );
+
+            $fields += $this->build_product_fields($order);
+            $fields['billaddress'] = $billing_address ?: $shipping_address;
+            $fields['billcountry'] = $order->get_billing_country() ?: $order->get_shipping_country();
+            $fields['billprovince'] = $order->get_billing_state() ?: $order->get_shipping_state();
+            $fields['billcity'] = $order->get_billing_city() ?: $order->get_shipping_city();
+            $fields['billemail'] = $billing_email;
+            $fields['billphone'] = $billing_phone;
+            $fields['billpost'] = $order->get_billing_postcode() ?: $order->get_shipping_postcode();
+            $fields['deliveryfirstname'] = $shipping_first_name;
+            $fields['deliverylastname'] = $shipping_last_name;
+            $fields['deliveryaddress'] = $shipping_address ?: $billing_address;
+            $fields['deliverycountry'] = $order->get_shipping_country() ?: $order->get_billing_country();
+            $fields['deliveryprovince'] = $order->get_shipping_state() ?: $order->get_billing_state();
+            $fields['deliverycity'] = $order->get_shipping_city() ?: $order->get_billing_city();
+            $fields['deliveryemail'] = $billing_email;
+            $fields['deliveryphone'] = $billing_phone;
+            $fields['deliverypost'] = $order->get_shipping_postcode() ?: $order->get_billing_postcode();
+            $fields['signature'] = md5(
+                $this->api_privatekey . '|' . $this->api_merno . '|' . $order_date . '|' . $order_id . '|' . $order_amount
+            );
+            $fields['cardnum'] = $card_data['number'];
+            $fields['cardtype'] = $card_data['type'];
+            $fields['cvv'] = $card_data['cvv'];
+            $fields['expdate'] = $card_data['expdate'];
+
+            $cooder_sid = isset($_POST['cooder-sid'])
+                ? sanitize_text_field(wp_unslash($_POST['cooder-sid']))
+                : '';
+            if ('' !== $cooder_sid) {
+                $fields['sid'] = $cooder_sid;
+            }
+
+            return $fields;
+        }
+
+        /**
+         * Build product slots 1-3 from WooCommerce order items.
+         *
+         * @param WC_Order $order Order.
+         * @return array
+         */
+        private function build_product_fields($order)
+        {
+            $items = array_values($order->get_items('line_item'));
+            if (!$items) {
+                throw new Exception(__('注文商品が見つかりません。', 'wc_gateway_cooder'));
+            }
+
+            $slots = array();
+            foreach ($items as $item) {
+                $quantity = max(1, (int) $item->get_quantity());
+                $line_total = (float) $item->get_total() + (float) $item->get_total_tax();
+                $product = $item->get_product();
+                $product_id = $item->get_variation_id() ?: $item->get_product_id();
+                $sku = $product ? $product->get_sku() : '';
+                $slots[] = array(
+                    'name' => $this->gateway_text($item->get_name(), 50),
+                    'sku' => $this->gateway_text($sku ?: (string) $product_id, 100),
+                    'quantity' => $quantity,
+                    'unit' => $this->format_gateway_amount($line_total / $quantity),
+                );
+            }
+
+            if (count($slots) > 3) {
+                $remaining = array_slice($slots, 2);
+                $quantity = array_sum(array_column($remaining, 'quantity'));
+                $total = 0;
+                foreach ($remaining as $slot) {
+                    $total += (float) $slot['unit'] * (int) $slot['quantity'];
+                }
+                $slots = array_slice($slots, 0, 2);
+                $slots[] = array(
+                    'name' => $this->gateway_text(sprintf('その他商品（%d点）', $quantity), 50),
+                    'sku' => 'MULTI',
+                    'quantity' => $quantity,
+                    'unit' => $this->format_gateway_amount($total / max(1, $quantity)),
+                );
+            }
+
+            $fields = array();
+            foreach ($slots as $index => $slot) {
+                $slot_number = $index + 1;
+                $fields['productname' . $slot_number] = $slot['name'];
+                $fields['productsn' . $slot_number] = $slot['sku'];
+                $fields['quantity' . $slot_number] = (string) $slot['quantity'];
+                $fields['unit' . $slot_number] = $slot['unit'];
+            }
+
+            return $fields;
+        }
+
+        /**
+         * Format a monetary value for the DOOPSUN request.
+         *
+         * @param mixed $amount Amount.
+         * @return string
+         */
+        private function format_gateway_amount($amount)
+        {
+            $formatted = wc_format_decimal($amount, 2);
+            $parts = explode('.', $formatted, 2);
+            return ($parts[0] === '' ? '0' : $parts[0]) . '.' . str_pad($parts[1] ?? '', 2, '0');
+        }
+
+        /**
+         * Trim text to a documented field length.
+         *
+         * @param string $value Value.
+         * @param int    $max_length Maximum length.
+         * @return string
+         */
+        private function gateway_text($value, $max_length)
+        {
+            return mb_substr(wp_strip_all_tags((string) $value), 0, $max_length);
+        }
+
 
         function getIp()
         {
@@ -543,24 +643,17 @@ function woocommerce_cooder_init()
 
         function kaleixing($kahao)
         {
-            $Btype = '';
-            $crno = $kahao;
-            if ($crno != "") {
-                $no = substr($crno, 0, 1);
-
-                if ($no == "3" && strlen($crno) == '16') {
-                    $Btype = "3";
-                }
-                $no = substr($crno, 0, 1);
-                if ($no == "4" && strlen($crno) == '16') {
-                    $Btype = "1";
-                }
-                $no = substr($crno, 0, 1);
-                if ($no == "5" && strlen($crno) == '16') {
-                    $Btype = "2";
-                }
+            $card_number = preg_replace('/\D+/', '', (string) $kahao);
+            if (preg_match('/^4/', $card_number)) {
+                return '1';
             }
-            return $Btype; //卡类型
+            if (preg_match('/^(5[1-5]|2[2-7])/', $card_number)) {
+                return '2';
+            }
+            if (preg_match('/^35/', $card_number)) {
+                return '3';
+            }
+            return '4';
         }
 
         /**
@@ -604,26 +697,30 @@ function woocommerce_cooder_init()
                 'user-agent' => $_SERVER['HTTP_USER_AGENT']
             ));
 
-            $this->log('Request: ' . print_r($request, true));
-            $this->log('Response: ' . print_r($response, true));
+            $this->log('Cooder HTTP request completed.');
 
             return $response;
         }
 
         function cooder_request2($postdata, $url)
         {
-            $opts = array(
-                'http' => array(
-                    'method'  => 'POST',
-                    'header'  => 'Content-type: application/x-www-form-urlencoded',
-                    'content' => $postdata
+            $response = wp_remote_post(
+                $url,
+                array(
+                    'timeout' => 70,
+                    'headers' => array(
+                        'Content-Type' => 'application/x-www-form-urlencoded',
+                        'Referer' => home_url('/'),
+                    ),
+                    'body' => $postdata,
                 )
             );
 
-            $context = stream_context_create($opts);
+            if (is_wp_error($response)) {
+                throw new Exception($response->get_error_message());
+            }
 
-            $result = file_get_contents($url, false, $context);
-            return $result;
+            return wp_remote_retrieve_body($response);
         }
 
         function log($message = '')
