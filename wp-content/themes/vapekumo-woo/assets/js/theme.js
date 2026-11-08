@@ -1496,6 +1496,8 @@
       }
       source.dataset.vkExpiryReady = '1';
       source.classList.add('vk-card-expiry-source');
+      source.required = false;
+      source.removeAttribute('aria-required');
       var label = field.querySelector('label');
       if (label) {
         label.classList.add('visually-hidden');
@@ -1515,7 +1517,7 @@
       }
       var wrapper = document.createElement('div');
       wrapper.className = 'vk-expiry-fields';
-      wrapper.innerHTML = '<label class="vk-card-field"><span>有効期限（月）</span><select class="field__select" data-vk-expiry-month>' + monthOptions + '</select></label><label class="vk-card-field"><span>有効期限（年）</span><select class="field__select" data-vk-expiry-year>' + yearOptions + '</select></label>';
+      wrapper.innerHTML = '<label class="vk-card-field"><span>有効期限（月）<span class="field__req" aria-hidden="true">必須</span></span><select class="field__select" data-vk-expiry-month required aria-required="true">' + monthOptions + '</select></label><label class="vk-card-field"><span>有効期限（年）<span class="field__req" aria-hidden="true">必須</span></span><select class="field__select" data-vk-expiry-year required aria-required="true">' + yearOptions + '</select></label>';
       field.appendChild(wrapper);
       var updateSource = function () {
         var month = wrapper.querySelector('[data-vk-expiry-month]').value;
