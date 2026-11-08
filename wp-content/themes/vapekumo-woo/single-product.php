@@ -31,10 +31,7 @@ get_header();
 		$discount     = ( $product->is_on_sale() && $regular > $price ) ? (int) round( ( ( $regular - $price ) / $regular ) * 100 ) : 0;
 		$image_ids    = array_values( array_filter( array_merge( array( $product->get_image_id() ), $product->get_gallery_image_ids() ) ) );
 		$image_ids    = array_values( array_unique( array_map( 'intval', $image_ids ) ) );
-		$image_slots  = array();
-		for ( $index = 0; $index < 20; $index++ ) {
-			$image_slots[] = $image_ids ? $image_ids[ $index % count( $image_ids ) ] : 0;
-		}
+		$image_slots  = $image_ids ? $image_ids : array( 0 );
 		?>
 		<section class="pdp" aria-labelledby="pdpTitle">
 			<div class="container">
@@ -43,7 +40,7 @@ get_header();
 						<div class="pdp-gallery" id="pdpGallery">
 							<div class="pdp-gallery__rail">
 								<button class="pdp-gallery__nav js-pdp-up" type="button" aria-label="前の画像へ" disabled><i class="bi bi-chevron-up" aria-hidden="true"></i></button>
-								<div class="pdp-gallery__thumbs" id="pdpThumbs" role="tablist" aria-label="商品画像を切り替え（全20枚）">
+								<div class="pdp-gallery__thumbs" id="pdpThumbs" role="tablist" aria-label="商品画像を切り替え（全<?php echo esc_attr( (string) count( $image_slots ) ); ?>枚）">
 									<?php foreach ( $image_slots as $index => $image_id ) : ?>
 										<?php
 										$image_url   = $image_id ? wp_get_attachment_image_url( $image_id, 'large' ) : wc_placeholder_img_src( 'woocommerce_single' );
@@ -67,7 +64,7 @@ get_header();
 									<img class="pdp-gallery__img" id="pdpImage" src="<?php echo esc_url( $image_slots ? wp_get_attachment_image_url( $image_slots[0], 'large' ) : wc_placeholder_img_src( 'woocommerce_single' ) ); ?>" alt="<?php echo esc_attr( $product->get_name() . ' 商品画像1' ); ?>" width="480" height="480" fetchpriority="high" decoding="async">
 									<span class="pdp-lens" id="pdpLens" aria-hidden="true"></span>
 								</div>
-								<span class="pdp-gallery__count" id="pdpCount">1 / 20</span>
+								<span class="pdp-gallery__count" id="pdpCount">1 / <?php echo esc_html( (string) count( $image_slots ) ); ?></span>
 								<div class="pdp-zoom" id="pdpZoom" aria-hidden="true"></div>
 							</div>
 						</div>
@@ -85,7 +82,7 @@ get_header();
 								<?php else : ?>
 									<span class="pdp-rating">購入者のみレビュー投稿できます</span>
 								<?php endif; ?>
-								<span>型番：<?php echo esc_html( $product->get_sku() ?: '—' ); ?></span>
+								<span data-vk-sku data-parent-sku="<?php echo esc_attr( $product->get_sku() ?: '' ); ?>">型番：<b id="pdpSku"><?php echo esc_html( $product->get_sku() ?: '—' ); ?></b></span>
 							</div>
 
 							<div class="pdp-price">

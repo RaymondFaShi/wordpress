@@ -431,27 +431,64 @@ add_filter( 'woocommerce_price_format', 'vk_price_format', 10, 2 );
  * @return array
  */
 function vk_checkout_fields( $fields ) {
-	$placeholder_map = array(
-		'billing_first_name' => '名',
-		'billing_last_name'  => '姓',
-		'billing_address_1'  => '町名・番地・建物名',
-		'billing_city'       => '市区町村',
-		'billing_postcode'   => '郵便番号',
-		'billing_phone'      => '電話番号',
-		'billing_email'      => 'メールアドレス',
+	$field_map = array(
+		'first_name' => array(
+			'label'       => '名',
+			'placeholder' => '太郎',
+			'required'    => true,
+		),
+		'last_name' => array(
+			'label'       => '姓',
+			'placeholder' => '山田',
+			'required'    => true,
+		),
+		'phone' => array(
+			'label'       => '電話番号',
+			'placeholder' => '09012345678',
+			'required'    => true,
+		),
+		'postcode' => array(
+			'label'       => '郵便番号',
+			'placeholder' => '150-0001',
+			'required'    => true,
+		),
+		'state' => array(
+			'label'       => '都道府県',
+			'placeholder' => '都道府県を選択',
+			'required'    => true,
+		),
+		'city' => array(
+			'label'       => '市区町村（市・町・村）',
+			'placeholder' => '渋谷区',
+			'required'    => true,
+		),
+		'address_1' => array(
+			'label'       => '詳細住所1（番地・建物名）',
+			'placeholder' => '神宮前1-2-3 サンプルマンション',
+			'required'    => true,
+		),
+		'address_2' => array(
+			'label'       => '詳細住所2（部屋番号など・任意）',
+			'placeholder' => '101号室',
+			'required'    => false,
+		),
 	);
-	foreach ( $placeholder_map as $key => $placeholder ) {
-		if ( isset( $fields['billing'][ $key ] ) ) {
-			$fields['billing'][ $key ]['placeholder'] = $placeholder;
+
+	foreach ( array( 'billing', 'shipping' ) as $section ) {
+		foreach ( $field_map as $field_name => $field_config ) {
+			$key = $section . '_' . $field_name;
+			if ( isset( $fields[ $section ][ $key ] ) ) {
+				$fields[ $section ][ $key ]['label']       = $field_config['label'];
+				$fields[ $section ][ $key ]['placeholder'] = $field_config['placeholder'];
+				$fields[ $section ][ $key ]['required']    = $field_config['required'];
+			}
 		}
 	}
-	foreach ( array( 'billing', 'shipping' ) as $section ) {
-		if ( isset( $fields[ $section ][ $section . '_first_name' ] ) ) {
-			$fields[ $section ][ $section . '_first_name' ]['label'] = '名';
-		}
-		if ( isset( $fields[ $section ][ $section . '_last_name' ] ) ) {
-			$fields[ $section ][ $section . '_last_name' ]['label'] = '姓';
-		}
+
+	if ( isset( $fields['billing']['billing_email'] ) ) {
+		$fields['billing']['billing_email']['label']       = 'メールアドレス';
+		$fields['billing']['billing_email']['placeholder'] = 'you@example.com';
+		$fields['billing']['billing_email']['required']    = true;
 	}
 	if ( isset( $fields['order']['order_comments'] ) ) {
 		$fields['order']['order_comments']['label']       = 'ご要望・備考';
@@ -460,6 +497,30 @@ function vk_checkout_fields( $fields ) {
 	return $fields;
 }
 add_filter( 'woocommerce_checkout_fields', 'vk_checkout_fields' );
+
+/**
+ * Require a shipping address for shippable checkout orders.
+ *
+ * @param bool $needs_shipping_address Current value.
+ * @return bool
+ */
+function vk_require_checkout_shipping_address( $needs_shipping_address ) {
+	if ( function_exists( 'is_checkout' ) && is_checkout() && WC()->cart && WC()->cart->needs_shipping() ) {
+		return true;
+	}
+	return $needs_shipping_address;
+}
+add_filter( 'woocommerce_cart_needs_shipping_address', 'vk_require_checkout_shipping_address' );
+
+/**
+ * Keep WooCommerce's shipping address visible on the custom checkout.
+ *
+ * @return bool
+ */
+function vk_checkout_ship_to_different_address() {
+	return true;
+}
+add_filter( 'woocommerce_ship_to_different_address_checked', 'vk_checkout_ship_to_different_address' );
 
 /**
  * Japanese checkout privacy text.

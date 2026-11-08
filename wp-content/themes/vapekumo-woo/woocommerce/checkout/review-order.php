@@ -7,75 +7,114 @@
  */
 
 defined( 'ABSPATH' ) || exit;
+
+$cart            = WC()->cart;
+$shipping_method = vk_get_checkout_shipping_summary();
+$coupon_discount = (float) $cart->get_discount_total() + (float) $cart->get_discount_tax();
 ?>
-<table class="shop_table woocommerce-checkout-review-order-table">
-	<thead><tr><th class="product-name">商品</th><th class="product-total">小計</th></tr></thead>
-	<tbody>
-		<?php do_action( 'woocommerce_review_order_before_cart_contents' ); ?>
-		<?php foreach ( WC()->cart->get_cart() as $cart_item_key => $cart_item ) : ?>
+<div class="woocommerce-checkout-review-order-table">
+	<?php do_action( 'woocommerce_review_order_before_cart_contents' ); ?>
+	<ul class="co-order">
+		<?php foreach ( $cart->get_cart() as $cart_item_key => $cart_item ) : ?>
 			<?php
 			$_product = apply_filters( 'woocommerce_cart_item_product', $cart_item['data'], $cart_item, $cart_item_key );
 			$visible  = apply_filters( 'woocommerce_checkout_cart_item_visible', true, $cart_item, $cart_item_key );
 			if ( ! $_product instanceof WC_Product || ! $_product->exists() || $cart_item['quantity'] <= 0 || ! $visible ) {
 				continue;
 			}
-			$parent_product = $_product instanceof WC_Product_Variation ? wc_get_product( $_product->get_parent_id() ) : null;
-			$display_name   = $parent_product ? $parent_product->get_name() : WC()->cart->get_item_product_name( $cart_item, $_product );
-			$product_name   = apply_filters( 'woocommerce_cart_item_name', $display_name, $cart_item, $cart_item_key );
+			$parent_product  = $_product instanceof WC_Product_Variation ? wc_get_product( $_product->get_parent_id() ) : null;
+			$display_product = $parent_product ?: $_product;
+			$display_name    = apply_filters(
+				'woocommerce_cart_item_name',
+				$display_product->get_name(),
+				$cart_item,
+				$cart_item_key
+			);
 			$variation_lines = vk_get_variation_attribute_lines( $_product );
-			$meta            = $variation_lines ? '' : wc_get_formatted_cart_item_data( $cart_item, false, $product_name );
+			$item_total      = apply_filters(
+				'woocommerce_cart_item_subtotal',
+				$cart->get_product_subtotal( $_product, $cart_item['quantity'] ),
+				$cart_item,
+				$cart_item_key
+			);
 			?>
-			<tr class="<?php echo esc_attr( apply_filters( 'woocommerce_cart_item_class', 'cart_item', $cart_item, $cart_item_key ) ); ?>">
-				<td class="product-name">
-					<span class="co-summary-product">
-						<span class="co-summary-product__thumb"><?php echo $_product->get_image( 'woocommerce_thumbnail' ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></span>
-						<span class="co-summary-product__body">
-							<span class="co-summary-product__name"><?php echo wp_kses_post( $product_name ); ?></span>
-							<?php if ( $variation_lines ) : ?>
-								<span class="co-summary-product__meta"><?php foreach ( $variation_lines as $variation_line ) : ?><span><?php echo esc_html( $variation_line['label'] . '：' . $variation_line['value'] ); ?></span><?php endforeach; ?></span>
-							<?php endif; ?>
-							<?php if ( $meta ) : ?><span class="co-summary-product__meta"><?php echo wp_kses_post( $meta ); ?></span><?php endif; ?>
-							<span class="co-summary-product__qty">数量：<?php echo esc_html( (string) $cart_item['quantity'] ); ?></span>
-						</span>
-					</span>
-				</td>
-				<td class="product-total"><?php echo apply_filters( 'woocommerce_cart_item_subtotal', WC()->cart->get_product_subtotal( $_product, $cart_item['quantity'] ), $cart_item, $cart_item_key ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?></td>
-			</tr>
+			<li class="<?php echo esc_attr( apply_filters( 'woocommerce_cart_item_class', 'co-order__item', $cart_item, $cart_item_key ) ); ?>">
+				<a class="co-order__thumb" href="<?php echo esc_url( $display_product->get_permalink() ); ?>">
+					<?php echo $display_product->get_image( 'woocommerce_thumbnail', array( 'loading' => 'lazy' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+				</a>
+				<div class="co-order__info">
+					<p class="co-order__name"><a href="<?php echo esc_url( $display_product->get_permalink() ); ?>"><?php echo wp_kses_post( $display_name ); ?></a></p>
+					<?php if ( $variation_lines ) : ?>
+						<p class="co-order__opts">
+							<?php
+							echo esc_html(
+								implode(
+									'／',
+									array_map(
+										static function ( $line ) {
+											return $line['label'] . '：' . $line['value'];
+										},
+										$variation_lines
+									)
+								)
+							);
+							?>
+						</p>
+					<?php endif; ?>
+					<p class="co-order__meta"><span>数量：<?php echo esc_html( (string) $cart_item['quantity'] ); ?></span><b><?php echo wp_kses_post( $item_total ); ?></b></p>
+				</div>
+			</li>
 		<?php endforeach; ?>
-		<?php do_action( 'woocommerce_review_order_after_cart_contents' ); ?>
-	</tbody>
-	<tfoot>
-		<tr class="cart-subtotal"><th>商品合計</th><td><?php wc_cart_totals_subtotal_html(); ?></td></tr>
-		<?php foreach ( WC()->cart->get_coupons() as $code => $coupon ) : ?>
-			<tr class="cart-discount coupon-<?php echo esc_attr( sanitize_title( $code ) ); ?>"><th><?php wc_cart_totals_coupon_label( $coupon ); ?></th><td><?php wc_cart_totals_coupon_html( $coupon ); ?></td></tr>
-		<?php endforeach; ?>
-		<?php if ( ! WC()->cart->get_coupons() ) : ?>
-			<tr class="vk-coupon-empty"><th>クーポン割引</th><td><span>−</span></td></tr>
-		<?php endif; ?>
-		<?php if ( WC()->cart->needs_shipping() && WC()->cart->show_shipping() ) : ?>
-			<?php $shipping_summary = vk_get_checkout_shipping_summary(); ?>
+	</ul>
+	<?php do_action( 'woocommerce_review_order_after_cart_contents' ); ?>
+
+	<dl class="co-summary__rows">
+		<div class="co-summary__row">
+			<dt>商品合計</dt>
+			<dd><?php echo wp_kses_post( $cart->get_cart_subtotal() ); ?></dd>
+		</div>
+		<div class="co-summary__row co-summary__row--coupon">
+			<dt>クーポン割引</dt>
+			<dd>
+				<?php if ( $coupon_discount > 0 ) : ?>
+					−<?php echo wp_kses_post( wc_price( $coupon_discount ) ); ?>
+				<?php else : ?>
+					<span class="is-none">−</span>
+				<?php endif; ?>
+			</dd>
+		</div>
+		<?php if ( $cart->needs_shipping() && $cart->show_shipping() ) : ?>
 			<?php do_action( 'woocommerce_review_order_before_shipping' ); ?>
-			<tr class="woocommerce-shipping-total">
-				<th>送料</th>
-				<td><?php echo null !== $shipping_summary['cost'] && $shipping_summary['cost'] <= 0 ? '無料' : wp_kses_post( WC()->cart->get_cart_shipping_total() ); ?></td>
-			</tr>
-			<tr class="vk-shipping-method-row">
-				<th>お届け方法</th>
-				<td><?php echo esc_html( $shipping_summary['label'] ); ?></td>
-			</tr>
+			<div class="co-summary__row">
+				<dt>送料</dt>
+				<dd><?php echo null !== $shipping_method['cost'] && $shipping_method['cost'] <= 0 ? '無料' : wp_kses_post( $cart->get_cart_shipping_total() ); ?></dd>
+			</div>
+			<div class="co-summary__row co-summary__row--method">
+				<dt>お届け方法</dt>
+				<dd><?php echo esc_html( $shipping_method['label'] ); ?></dd>
+			</div>
 			<?php do_action( 'woocommerce_review_order_after_shipping' ); ?>
 		<?php endif; ?>
-		<?php foreach ( WC()->cart->get_fees() as $fee ) : ?>
-			<tr class="fee"><th><?php echo esc_html( $fee->name ); ?></th><td><?php wc_cart_totals_fee_html( $fee ); ?></td></tr>
+		<?php foreach ( $cart->get_fees() as $fee ) : ?>
+			<div class="co-summary__row fee">
+				<dt><?php echo esc_html( $fee->name ); ?></dt>
+				<dd><?php wc_cart_totals_fee_html( $fee ); ?></dd>
+			</div>
 		<?php endforeach; ?>
 		<?php
 		$chosen_payment = (string) WC()->session->get( 'chosen_payment_method', 'cooder' );
 		$gateways       = WC()->payment_gateways()->payment_gateways();
 		$payment_label  = isset( $gateways[ $chosen_payment ] ) ? $gateways[ $chosen_payment ]->get_title() : 'クレジットカード';
 		?>
-		<tr class="vk-payment-method-row"><th>お支払い方法</th><td><?php echo esc_html( $payment_label ); ?></td></tr>
+		<div class="co-summary__row co-summary__row--method vk-payment-method-row">
+			<dt>お支払い方法</dt>
+			<dd><?php echo esc_html( $payment_label ); ?></dd>
+		</div>
 		<?php do_action( 'woocommerce_review_order_before_order_total' ); ?>
-		<tr class="order-total"><th>合計（税込）</th><td><?php wc_cart_totals_order_total_html(); ?></td></tr>
+		<div class="co-summary__row co-summary__row--total order-total">
+			<dt>合計（税込）</dt>
+			<dd><?php wc_cart_totals_order_total_html(); ?></dd>
+		</div>
 		<?php do_action( 'woocommerce_review_order_after_order_total' ); ?>
-	</tfoot>
-</table>
+	</dl>
+</div>

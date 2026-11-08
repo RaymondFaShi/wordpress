@@ -452,3 +452,50 @@ function vk_protect_internal_order_meta( $protected, $meta_key, $meta_type ) {
 	return $protected;
 }
 add_filter( 'is_protected_meta', 'vk_protect_internal_order_meta', 10, 3 );
+
+/**
+ * Render applied coupons in the checkout coupon card.
+ *
+ * @return string
+ */
+function vk_checkout_applied_coupons_html() {
+	$coupons = WC()->cart ? WC()->cart->get_coupons() : array();
+	ob_start();
+	?>
+	<div class="vk-coupon-applied-wrap">
+		<?php if ( $coupons ) : ?>
+			<div class="co-coupon__applied">
+				<?php foreach ( $coupons as $coupon_code => $coupon ) : ?>
+					<?php
+					$discount = (float) WC()->cart->get_coupon_discount_amount(
+						$coupon_code,
+						WC()->cart->display_prices_including_tax()
+					);
+					?>
+					<div class="co-coupon__applied-item">
+						<div class="co-coupon__applied-head">
+							<span class="co-coupon__tag"><?php echo esc_html( $coupon->get_code() ); ?></span>
+							<span class="co-coupon__saved">−<?php echo wp_kses_post( wc_price( $discount ) ); ?></span>
+							<button class="co-coupon__remove js-vk-coupon-remove" type="button" data-coupon="<?php echo esc_attr( $coupon_code ); ?>">解除</button>
+						</div>
+						<p class="co-coupon__target">対象：全商品</p>
+					</div>
+				<?php endforeach; ?>
+			</div>
+		<?php endif; ?>
+	</div>
+	<?php
+	return (string) ob_get_clean();
+}
+
+/**
+ * Refresh the applied-coupon box after WooCommerce recalculates checkout.
+ *
+ * @param array $fragments Checkout fragments.
+ * @return array
+ */
+function vk_checkout_coupon_fragments( $fragments ) {
+	$fragments['.vk-coupon-applied-wrap'] = vk_checkout_applied_coupons_html();
+	return $fragments;
+}
+add_filter( 'woocommerce_update_order_review_fragments', 'vk_checkout_coupon_fragments' );

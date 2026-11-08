@@ -940,6 +940,7 @@ body.woocommerce .pdp-buy--woo form.cart .js-buy-now:hover {
 
 .woocommerce form .form-row .required {
 	color: var(--red);
+	visibility: visible;
 }
 
 .field__req,

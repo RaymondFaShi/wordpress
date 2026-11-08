@@ -599,8 +599,23 @@
       var lens = root.querySelector('#pdpLens');
       var zoom = root.querySelector('#pdpZoom');
       var index = 0;
+      var loadRequest = 0;
       if (!items.length || !image) {
         return;
+      }
+      function finishLoading() {
+        stage.classList.remove('is-loading');
+      }
+      function preloadNeighbors(current) {
+        [current + 1, current + 2].forEach(function (itemIndex) {
+          var item = items[itemIndex];
+          if (!item) {
+            return;
+          }
+          var preloader = new Image();
+          preloader.decoding = 'async';
+          preloader.src = item.getAttribute('data-src');
+        });
       }
       function show(next) {
         index = Math.max(0, Math.min(items.length - 1, next));
@@ -610,11 +625,44 @@
           item.setAttribute('aria-selected', active ? 'true' : 'false');
         });
         var activeItem = items[index];
-        image.src = activeItem.getAttribute('data-src');
-        image.alt = activeItem.getAttribute('data-alt') || '';
-        if (zoom) {
-          zoom.style.backgroundImage = 'url("' + image.src + '")';
-        }
+        var nextSrc = activeItem.getAttribute('data-src');
+        var nextAlt = activeItem.getAttribute('data-alt') || '';
+        var request = ++loadRequest;
+        stage.classList.add('is-loading');
+        var preloader = new Image();
+        preloader.decoding = 'async';
+        preloader.onload = function () {
+          if (request !== loadRequest) {
+            return;
+          }
+          image.src = nextSrc;
+          image.alt = nextAlt;
+          if (zoom) {
+            zoom.style.backgroundImage = 'url("' + nextSrc + '")';
+          }
+          var done = function () {
+            if (request === loadRequest) {
+              finishLoading();
+            }
+          };
+          if (typeof image.decode === 'function') {
+            image.decode().then(done).catch(done);
+          } else if (image.complete) {
+            done();
+          } else {
+            image.addEventListener('load', done, { once: true });
+          }
+          preloadNeighbors(index);
+        };
+        preloader.onerror = function () {
+          if (request !== loadRequest) {
+            return;
+          }
+          image.src = nextSrc;
+          image.alt = nextAlt;
+          finishLoading();
+        };
+        preloader.src = nextSrc;
         if (count) {
           count.textContent = (index + 1) + ' / ' + items.length;
         }
@@ -678,6 +726,19 @@
         return;
       }
       var selects = Array.prototype.slice.call(form.querySelectorAll('.variations select'));
+      var skuRoot = document.querySelector('[data-vk-sku]');
+      var skuNode = document.getElementById('pdpSku');
+      var parentSku = skuRoot ? String(skuRoot.getAttribute('data-parent-sku') || '') : '';
+      $(form).on('found_variation', function (event, variation) {
+        var sku = variation && variation.sku ? variation.sku : parentSku;
+        if (skuNode) {
+          skuNode.textContent = sku || '—';
+        }
+      }).on('reset_data', function () {
+        if (skuNode) {
+          skuNode.textContent = parentSku || '—';
+        }
+      });
       selects.forEach(function (select) {
         var options = Array.prototype.slice.call(select.options).filter(function (option) { return option.value; });
         var preferredOrder = ['メンソール', 'マンゴー', 'ブルーベリー', 'ピーチ', 'グレープ', 'ダブルアップル', 'レモンソーダ', 'ストロベリーアイス'];
@@ -734,7 +795,6 @@
         container.appendChild(group);
       });
       form.querySelector('.variations')?.classList.add('pdp-variations-native');
-
     },
     buyNow: function () {
       var form = document.querySelector('.pdp-buy--woo form.cart');
@@ -1408,15 +1468,18 @@
       if (!$input.length || !$button.length || !window.wc_checkout_params) {
         return;
       }
+      function setMessage(message, isError) {
+        $message.prop('hidden', false).toggleClass('is-error', !!isError).text(message);
+      }
       $button.on('click', function () {
         var code = $.trim($input.val());
         if (!code) {
-          $message.prop('hidden', false).addClass('is-error').text('クーポンコードを入力してください。');
+          setMessage('クーポンコードを入力してください。', true);
           $input.trigger('focus');
           return;
         }
         $button.prop('disabled', true);
-        $message.prop('hidden', false).removeClass('is-error').text('クーポンを確認しています…');
+        setMessage('クーポンを確認しています…', false);
         $.ajax({
           type: 'POST',
           url: window.wc_checkout_params.wc_ajax_url.toString().replace('%%endpoint%%', 'apply_coupon'),
@@ -1428,15 +1491,43 @@
           dataType: 'html'
         }).done(function (response) {
           var isError = response.indexOf('woocommerce-error') !== -1 || response.indexOf('is-error') !== -1;
-          $message.prop('hidden', false).toggleClass('is-error', isError).text($('<div>').html(response).text().trim() || (isError ? 'クーポンを適用できませんでした。' : 'クーポンを適用しました。'));
+          setMessage($('<div>').html(response).text().trim() || (isError ? 'クーポンを適用できませんでした。' : 'クーポンを適用しました。'), isError);
           if (!isError) {
             $input.val('');
             $(document.body).trigger('update_checkout', { update_shipping_method: false });
           }
         }).fail(function () {
-          $message.prop('hidden', false).addClass('is-error').text('クーポンを適用できませんでした。');
+          setMessage('クーポンを適用できませんでした。', true);
         }).always(function () {
           $button.prop('disabled', false);
+        });
+      });
+      $(document).on('click', '.js-vk-coupon-remove', function () {
+        var $remove = $(this);
+        var coupon = String($remove.attr('data-coupon') || '');
+        if (!coupon) {
+          return;
+        }
+        $remove.prop('disabled', true);
+        setMessage('クーポンを解除しています…', false);
+        $.ajax({
+          type: 'POST',
+          url: window.wc_checkout_params.wc_ajax_url.toString().replace('%%endpoint%%', 'remove_coupon'),
+          data: {
+            security: window.wc_checkout_params.remove_coupon_nonce,
+            coupon: coupon
+          },
+          dataType: 'html'
+        }).done(function (response) {
+          var isError = response.indexOf('woocommerce-error') !== -1 || response.indexOf('is-error') !== -1;
+          setMessage($('<div>').html(response).text().trim() || (isError ? 'クーポンを解除できませんでした。' : 'クーポンを解除しました。'), isError);
+          if (!isError) {
+            $(document.body).trigger('update_checkout', { update_shipping_method: false });
+          }
+        }).fail(function () {
+          setMessage('クーポンを解除できませんでした。', true);
+        }).always(function () {
+          $remove.prop('disabled', false);
         });
       });
     }
@@ -1526,6 +1617,67 @@
         $(source).trigger('input').trigger('change');
       };
       $(wrapper).on('change', 'select', updateSource);
+    }
+  };
+
+  var CheckoutValidation = {
+    init: function () {
+      var form = document.querySelector('form.checkout');
+      if (!form) {
+        return;
+      }
+      $(form).on('checkout_place_order', function () {
+        var $firstInvalid = $();
+
+        $(form).find('.form-row.validate-required:visible').each(function () {
+          var $row = $(this);
+          var $field = $row.find('input:not([type="hidden"]), select, textarea').filter(':visible').first();
+          if (!$field.length) {
+            return;
+          }
+          var empty = $field.is(':checkbox') ? !$field.is(':checked') : $.trim($field.val()) === '';
+          if (empty) {
+            $row.addClass('woocommerce-invalid woocommerce-invalid-required-field');
+            $field.attr('aria-invalid', 'true').prop('required', true);
+            if (!$firstInvalid.length) {
+              $firstInvalid = $field;
+            }
+          }
+        });
+
+        var $cardNumber = $('#cooder-card-number:visible');
+        var $cardCvc = $('#cooder-card-cvc:visible');
+        var $expiryMonth = $('[data-vk-expiry-month]:visible');
+        var $expiryYear = $('[data-vk-expiry-year]:visible');
+        if ($cardNumber.length) {
+          var cardDigits = String($cardNumber.val() || '').replace(/\D/g, '');
+          if (!/^\d{12,20}$/.test(cardDigits)) {
+            $cardNumber.addClass('is-invalid').attr('aria-invalid', 'true');
+            if (!$firstInvalid.length) {
+              $firstInvalid = $cardNumber;
+            }
+          }
+        }
+        if ($cardCvc.length && !/^\d{3,5}$/.test(String($cardCvc.val() || '').replace(/\D/g, ''))) {
+          $cardCvc.addClass('is-invalid').attr('aria-invalid', 'true');
+          if (!$firstInvalid.length) {
+            $firstInvalid = $cardCvc;
+          }
+        }
+        if ($expiryMonth.length && (!$expiryMonth.val() || !$expiryYear.val())) {
+          $expiryMonth.add($expiryYear).addClass('is-invalid').attr('aria-invalid', 'true');
+          if (!$firstInvalid.length) {
+            $firstInvalid = $expiryMonth;
+          }
+        }
+
+        if ($firstInvalid.length) {
+          showToast('必須項目を入力してください。');
+          $firstInvalid.trigger('focus');
+          return false;
+        }
+        return true;
+      });
     }
   };
 
@@ -1647,6 +1799,7 @@
     CheckoutGuestAddresses.init();
     CheckoutCoupon.init();
     CheckoutCardForm.init();
+    CheckoutValidation.init();
     CartSelection.init();
     ToTop.init();
     WooControls.init();

@@ -77,9 +77,9 @@
 .ck-address-toggle input{width:17px;height:17px;accent-color:var(--cta)}
 .woocommerce-checkout .woocommerce-billing-fields > h3,
 .woocommerce-checkout #ship-to-different-address,
-.woocommerce-checkout .woocommerce-shipping-fields,
 .woocommerce-checkout #billing_country_field,
 .woocommerce-checkout #shipping_country_field{display:none !important}
+.woocommerce-checkout .form-row .optional{display:none}
 .vk-checkout-member .woocommerce-billing-fields__field-wrapper{display:none}
 .ck-address-select--billing[hidden]{display:none}
 
@@ -355,6 +355,11 @@
   background:var(--blue);
 }
 .co-coupon__applied[hidden]{display:none}
+.co-coupon__applied-item + .co-coupon__applied-item{
+  margin-top:10px;
+  padding-top:10px;
+  border-top:1px dashed rgba(30,123,239,.35);
+}
 .co-coupon__applied-head{display:flex;align-items:center;gap:9px}
 .co-coupon__tag{padding:2px 7px;border-radius:3px;background:var(--cta);color:#fff;font-size:10.5px;font-weight:700;letter-spacing:.02em}
 .co-coupon__saved{font-size:13px;font-weight:700;color:var(--red)}
@@ -608,6 +613,9 @@
   display:none !important;
 }
 .vk-guest-shipping .woocommerce-shipping-fields__field-wrapper{
+  display:block !important;
+}
+.vk-guest-shipping .shipping_address{
   display:block !important;
 }
 .vk-guest-billing .woocommerce-billing-fields{

@@ -106,6 +106,7 @@ $order_button    = apply_filters( 'woocommerce_order_button_text', __( '注文�
 							<button class="btn btn-cta co-coupon__apply" type="button">適用</button>
 						</div>
 						<p class="co-coupon__msg" data-vk-coupon-message role="status" aria-live="polite" hidden></p>
+						<?php echo vk_checkout_applied_coupons_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
 					</div>
 				</div>
 			</section>
