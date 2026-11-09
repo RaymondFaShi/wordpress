@@ -442,11 +442,11 @@ body.woocommerce .pdp-buy--woo form.cart .js-buy-now:hover {
 	gap: 7px;
 }
 
-.pdp-info > .pdp-price .woocommerce-Price-amount {
+/* .pdp-info > .pdp-price .woocommerce-Price-amount {
 	font-size: 29px;
 	font-weight: 700;
 	color: var(--navy);
-}
+} */
 
 .pdp-info > .pdp-price ins {
 	color: var(--red);

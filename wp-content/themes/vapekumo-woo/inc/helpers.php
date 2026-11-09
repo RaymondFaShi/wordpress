@@ -392,7 +392,7 @@ function vk_product_card( $product, $rank = 0, $badge = '', $show_button = false
 	$stock_quantity = vk_product_stock_total( $product );
 	$is_low_stock   = $product->is_in_stock() && null !== $stock_quantity && $stock_quantity > 0 && $stock_quantity < 10;
 	$stock_text     = $product->is_in_stock()
-		? ( $is_low_stock ? '在庫僅少・お早めに' : '在庫あり・当日発送' )
+		? ( $is_low_stock ? '在庫僅少・お早めに' : '在庫あり' )
 		: '在庫切れ・入荷待ち';
 	$product_type   = $product->get_type();
 	$variation_data = vk_product_variation_payload( $product );
@@ -604,7 +604,7 @@ function vk_favorites_shortcode() {
 								<div class="u-fav__body">
 									<p class="u-fav__brand"><?php echo esc_html( $favorite_brand ); ?></p>
 									<p class="u-fav__name"><a href="<?php echo esc_url( $favorite_link ); ?>"><?php echo esc_html( $favorite_name ); ?></a></p>
-									<p class="u-fav__stock<?php echo $favorite_product->is_in_stock() ? '' : ' u-fav__stock--out'; ?>"><?php echo esc_html( $favorite_product->is_in_stock() ? '在庫あり・当日発送' : '在庫切れ・入荷待ち' ); ?></p>
+									<p class="u-fav__stock<?php echo $favorite_product->is_in_stock() ? '' : ' u-fav__stock--out'; ?>"><?php echo esc_html( $favorite_product->is_in_stock() ? '在庫あり' : '在庫切れ・入荷待ち' ); ?></p>
 									<p class="u-fav__price"><?php echo wp_kses_post( $favorite_product->get_price_html() ); ?><span class="product-card__tax">（税込）</span></p>
 									<div class="u-fav__actions">
 										<button class="btn btn-cta js-add-cart" type="button" data-product-id="<?php echo esc_attr( (string) $favorite_product->get_id() ); ?>"<?php disabled( ! $favorite_product->is_in_stock() ); ?>><?php echo $favorite_product->is_in_stock() ? 'カートに入れる' : '在庫切れ'; ?></button>

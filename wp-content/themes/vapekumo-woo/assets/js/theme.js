@@ -943,7 +943,7 @@
       $submit.prop('disabled', !variation.in_stock).text(variation.in_stock ? 'カートに入れる' : '在庫切れ');
       $('#optionStockNote')
         .attr('class', 'option-stock-note' + (!variation.in_stock ? ' is-out' : variation.stock_qty !== null && variation.stock_qty <= 5 ? ' is-low' : ''))
-        .text(!variation.in_stock ? 'この規格は在庫切れです。' : variation.stock_qty !== null && variation.stock_qty <= 5 ? '在庫僅少：残り' + variation.stock_qty + '点です。' : '在庫あり・当日発送');
+        .text(!variation.in_stock ? 'この規格は在庫切れです。' : variation.stock_qty !== null && variation.stock_qty <= 5 ? '在庫僅少：残り' + variation.stock_qty + '点です。' : '在庫あり');
       if (variation.price) {
         $('#optionModalPrice').text(variation.price);
       }
@@ -1681,6 +1681,41 @@
     }
   };
 
+  var AuthTabs = {
+    init: function () {
+      var $switcher = $('.auth-switch');
+      if (!$switcher.length || !window.bootstrap) {
+        return;
+      }
+
+      function sync(button) {
+        var isRegister = button && button.id === 'tabRegisterBtn';
+        $switcher.attr('data-active', isRegister ? 'register' : 'login');
+        $switcher.find('.auth-switch__btn').each(function () {
+          $(this).toggleClass('active', this === button);
+        });
+      }
+
+      $switcher.on('click', '.auth-switch__btn', function () {
+        sync(this);
+      });
+      $switcher.on('shown.bs.tab', '.auth-switch__btn', function () {
+        sync(this);
+      });
+
+      var activeButton = $switcher.find('.auth-switch__btn.active').get(0);
+      if (activeButton) {
+        sync(activeButton);
+      }
+      if (window.location.hash === '#tabRegister') {
+        var registerButton = document.getElementById('tabRegisterBtn');
+        if (registerButton) {
+          window.bootstrap.Tab.getOrCreateInstance(registerButton).show();
+        }
+      }
+    }
+  };
+
   var CartSelection = {
     init: function () {
       var form = document.getElementById('cartForm');
@@ -1800,6 +1835,7 @@
     CheckoutCoupon.init();
     CheckoutCardForm.init();
     CheckoutValidation.init();
+    AuthTabs.init();
     CartSelection.init();
     ToTop.init();
     WooControls.init();

@@ -41,7 +41,13 @@ get_header();
 					<div class="row auth__grid">
 						<div class="col-12 col-lg-7 order-1 order-lg-2">
 							<div class="auth-card">
-								<div class="auth-card__top"><div class="auth-switch" role="tablist" aria-label="ログインと新規会員登録の切替" data-active="login"><span class="auth-switch__slider" aria-hidden="true"></span><button class="auth-switch__btn active" id="tabLoginBtn" data-bs-toggle="tab" data-bs-target="#tabLogin" type="button" role="tab" aria-controls="tabLogin" aria-selected="true">ログイン</button><button class="auth-switch__btn" id="tabRegisterBtn" data-bs-toggle="tab" data-bs-target="#tabRegister" type="button" role="tab" aria-controls="tabRegister" aria-selected="false">新規会員登録</button></div></div>
+								<div class="auth-card__top">
+                                    <div class="auth-switch" role="tablist" aria-label="ログインと新規会員登録の切替" data-active="login">
+                                        <span class="auth-switch__slider" aria-hidden="true"></span>
+                                        <button class="auth-switch__btn active" id="tabLoginBtn" data-bs-toggle="tab" data-bs-target="#tabLogin" type="button" role="tab" aria-controls="tabLogin" aria-selected="true">ログイン</button>
+                                        <button class="auth-switch__btn" id="tabRegisterBtn" data-bs-toggle="tab" data-bs-target="#tabRegister" type="button" role="tab" aria-controls="tabRegister" aria-selected="false">新規会員登録</button>
+                                    </div>
+                                </div>
 								<div class="tab-content">
 									<div class="tab-pane fade show active" id="tabLogin" role="tabpanel" aria-labelledby="tabLoginBtn" tabindex="0">
 										<div class="auth-card__body">

@@ -91,7 +91,7 @@ get_header();
 								<span class="pdp-price__tags"><span class="badge pdp-badge pdp-badge--free"><?php echo esc_html( vk_free_shipping_minimum_label() ); ?>円以上送料無料</span><span class="badge pdp-badge pdp-badge--genuine">正規品</span><?php if ( (int) $product->get_total_sales() >= 70 ) : ?><span class="badge pdp-badge pdp-badge--popular">人気商品</span><?php endif; ?></span>
 							</div>
 
-							<p class="pdp-stock"><?php echo esc_html( $product->is_in_stock() ? '在庫あり' : '在庫切れ' ); ?><span>／</span>15時までのご注文で当日発送</p>
+							<p class="pdp-stock"><?php echo esc_html( $product->is_in_stock() ? '在庫あり' : '在庫切れ' ); ?><span></p>
 							<p class="pdp-info__lead"><?php echo esc_html( wp_strip_all_tags( $product->get_short_description() ) ); ?></p>
 							<div class="pdp-variants" id="pdpVariants"></div>
 

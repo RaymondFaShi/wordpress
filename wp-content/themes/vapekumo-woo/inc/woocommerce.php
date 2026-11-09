@@ -305,7 +305,7 @@ function vk_product_description_tab() {
 				<tr><th scope="row">セット内容</th><td>本体、取扱説明書</td></tr>
 				<tr><th scope="row">在庫</th><td><?php echo esc_html( $product->is_in_stock() ? '在庫あり' : '在庫切れ' ); ?></td></tr>
 				<tr><th scope="row">配送</th><td><?php echo esc_html( vk_free_shipping_minimum_label() ); ?>円以上で送料無料</td></tr>
-				<tr><th scope="row">発送目安</th><td>15時までのご注文で当日発送</td></tr>
+				<!-- <tr><th scope="row">発送目安</th><td>15時までのご注文で当日発送</td></tr> -->
 				<tr><th scope="row">対象年齢</th><td>20歳以上</td></tr>
 			</tbody>
 		</table>
@@ -394,7 +394,7 @@ function vk_render_product_details( $product ) {
 				<tr><th scope="row">フレーバー</th><td><?php echo esc_html( $flavors ? implode( '、', $flavors ) : '商品ページでご確認ください' ); ?></td></tr>
 				<tr><th scope="row">在庫</th><td><?php echo esc_html( $product->is_in_stock() ? '在庫あり' : '在庫切れ' ); ?></td></tr>
 				<tr><th scope="row">配送</th><td><?php echo esc_html( vk_free_shipping_minimum_label() ); ?>円以上で送料無料</td></tr>
-				<tr><th scope="row">発送目安</th><td>15時までのご注文で当日発送</td></tr>
+				<!-- <tr><th scope="row">発送目安</th><td>15時までのご注文で当日発送</td></tr> -->
 				<tr><th scope="row">対象年齢</th><td>20歳以上</td></tr>
 			</tbody>
 		</table>
