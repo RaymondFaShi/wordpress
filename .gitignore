@@ -1,12 +1,4 @@
 # ==================================
-# 用户上传文件
-# ==================================
-
-/wp-content/uploads/
-/wp-content/blogs.dir/
-
-
-# ==================================
 # 缓存文件
 # ==================================
 
@@ -14,19 +6,6 @@
 /wp-content/upgrade/
 /wp-content/upgrade-temp-backup/
 /wp-content/wflogs/
-
-
-# ==================================
-# 备份文件
-# ==================================
-
-/wp-content/ai1wm-backups/
-/wp-content/updraft/
-/wp-content/wpvividbackups/
-/wp-content/backup*/
-/wp-content/backups/
-/wp-content/backups-dup-lite/
-
 
 # ==================================
 # 日志文件
@@ -60,9 +39,3 @@ Thumbs.db
 # ==================================
 
 node_modules/
-
-# ==================================
-# 语言包
-# ==================================
-
-/wp-content/languages/
