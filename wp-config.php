@@ -17,32 +17,6 @@
  *
  * @package WordPress
  */
-
-
-$host = $_SERVER[ 'HTTP_HOST' ] ?? 'jpstore01.com';
-
-// 限制允许访问的域名，避免 Host Header 注入
-$allowedHosts = [
-    'jpstore01.com',
-    'www.jpstore01.com',
-    '7s7.cc',
-    'www.7s7.cc',
-    '127.0.0.1:8080',
-];
-
-if ( !in_array( $host, $allowedHosts, true ) ) {
-    $host = 'jpstore01.com';
-}
-
-$scheme = (
-    ( !empty($_SERVER[ 'HTTPS' ] ) && $_SERVER[ 'HTTPS' ] !== 'off' )
-    || ( $_SERVER[ 'HTTP_X_FORWARDED_PROTO' ] ?? '' ) === 'https'
-) ? 'https' : 'http';
-
-define( 'WP_HOME', $scheme . '://' . $host );
-define( 'WP_SITEURL', $scheme . '://' . $host );
-
-
 // ** Database settings - You can get this info from your web host ** //
 /** The name of the database for WordPress */
 define( 'DB_NAME', 'jpstore01' );
