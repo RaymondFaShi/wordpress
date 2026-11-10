@@ -351,6 +351,37 @@ function vk_catalog_filter_terms( $filter ) {
 }
 
 /**
+ * Resolve the image uploaded for a WooCommerce product category.
+ *
+ * The standard WooCommerce thumbnail is authoritative. The legacy
+ * _vk_category_image field is retained only as a fallback for seeded data.
+ *
+ * @param WP_Term $term Product category.
+ * @param string  $size Image size.
+ * @return string
+ */
+function vk_product_category_image_url( $term, $size = 'large' ) {
+	if ( ! $term instanceof WP_Term || 'product_cat' !== $term->taxonomy ) {
+		return '';
+	}
+
+	$thumbnail_id = (int) get_term_meta( $term->term_id, 'thumbnail_id', true );
+	if ( $thumbnail_id > 0 ) {
+		$image_url = wp_get_attachment_image_url( $thumbnail_id, $size );
+		if ( $image_url ) {
+			return $image_url;
+		}
+	}
+
+	$legacy_image = get_term_meta( $term->term_id, '_vk_category_image', true );
+	if ( is_numeric( $legacy_image ) && (int) $legacy_image > 0 ) {
+		return (string) wp_get_attachment_image_url( (int) $legacy_image, $size );
+	}
+
+	return is_string( $legacy_image ) ? $legacy_image : '';
+}
+
+/**
  * Human-readable variation attributes for cart and checkout summaries.
  *
  * @param WC_Product $product Product object.

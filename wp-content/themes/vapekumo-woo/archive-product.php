@@ -133,11 +133,11 @@ $active_sort     = $active_price ? 'price' : ( isset( $sort_labels[ $orderby ] )
 				<nav class="cat-children" aria-label="<?php echo esc_attr( $title ); ?>の子カテゴリー">
 					<?php foreach ( $child_categories as $child ) : ?>
 						<?php
-						$image_url = (string) get_term_meta( $child->term_id, '_vk_category_image', true );
+						$image_url = vk_product_category_image_url( $child, 'full' );
 						$image_url = $image_url ?: vk_asset( 'images/category/cat-disposable.jpg' );
 						?>
 						<a class="cat-children__item" href="<?php echo esc_url( get_term_link( $child ) ); ?>">
-							<span class="cat-children__media"><img src="<?php echo esc_url( $image_url ); ?>" alt="<?php echo esc_attr( $child->name ); ?>" width="649" height="400" loading="lazy" decoding="async"></span>
+							<span class="cat-children__media"><img src="<?php echo esc_url( $image_url ); ?>" alt="<?php echo esc_attr( $child->name ); ?>" width="650" height="400" loading="lazy" decoding="async"></span>
 							<span class="cat-children__body"><span class="cat-children__name"><?php echo esc_html( $child->name ); ?></span><span class="cat-children__count"><?php echo esc_html( (string) $child->count ); ?>件</span></span>
 						</a>
 					<?php endforeach; ?>

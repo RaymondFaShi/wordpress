@@ -173,7 +173,7 @@ function vk_get_storefront_category_navigation() {
 			)
 		);
 		$url      = get_term_link( $term );
-		$image    = (string) get_term_meta( $term->term_id, '_vk_category_image', true );
+		$image    = vk_product_category_image_url( $term, 'large' );
 		$image    = $image ?: vk_asset( $fallback_images[ $term->slug ] ?? 'images/banner/banner-01.jpg' );
 		$navigation[] = array(
 			'type'     => 'category',
