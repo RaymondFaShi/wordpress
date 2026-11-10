@@ -35,6 +35,16 @@ function vk_home_banner_defaults() {
 				'link'  => home_url( '/brand/' ),
 				'alt'   => 'ブランド特集',
 			),
+            5 => array(
+				'image' => 'images/banner/banner-04.jpg',
+				'link'  => home_url( '/brand/' ),
+				'alt'   => 'ブランド特集',
+			),
+            6 => array(
+				'image' => 'images/banner/banner-04.jpg',
+				'link'  => home_url( '/brand/' ),
+				'alt'   => 'ブランド特集',
+			),
 		),
 		'promo' => array(
 			1 => array(

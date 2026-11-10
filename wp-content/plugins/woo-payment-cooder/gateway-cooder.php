@@ -404,11 +404,10 @@ function woocommerce_cooder_init()
                     "&deliverycountry=" . $ShipCountry .
                     "&sid=" . $cooderSid;
 
-                    var_dump( $process_button_string );exit;
+                    // var_dump( $process_button_string );exit;
 
 
                 // Build the HTTP request   $this->api_url
-
                 $response = $this->cooder_request2($process_button_string, $this->api_url);
 
                 $this->log($response);

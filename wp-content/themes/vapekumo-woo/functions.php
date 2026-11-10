@@ -468,8 +468,12 @@ function vk_pre_get_posts( $query ) {
 			$meta_query[] = array( 'key' => '_price', 'value' => (float) $max_price, 'compare' => '<=', 'type' => 'NUMERIC' );
 		}
 
-		$nicotine = array_values( array_intersect( $nicotine, array( '0', '1', '2', '3', '4', '5' ) ) );
-		$puffs    = array_values( array_intersect( $puffs, array( '0-5000', '5001-10000', '10001-20000', '20001-' ) ) );
+		$nicotine_taxonomy = vk_catalog_filter_taxonomy( 'nicotine' );
+		$puff_taxonomy     = vk_catalog_filter_taxonomy( 'puffs' );
+		$nicotine_slugs    = wp_list_pluck( vk_catalog_filter_terms( 'nicotine' ), 'slug' );
+		$puff_slugs        = wp_list_pluck( vk_catalog_filter_terms( 'puffs' ), 'slug' );
+		$nicotine          = array_values( array_intersect( $nicotine, $nicotine_slugs ) );
+		$puffs             = array_values( array_intersect( $puffs, $puff_slugs ) );
 		if ( count( $meta_query ) > 1 ) {
 			$meta_query['relation'] = 'AND';
 		}
@@ -478,17 +482,17 @@ function vk_pre_get_posts( $query ) {
 		}
 		if ( $nicotine || $puffs ) {
 			$tax_query = (array) $query->get( 'tax_query' );
-			if ( $nicotine ) {
+			if ( $nicotine && $nicotine_taxonomy ) {
 				$tax_query[] = array(
-					'taxonomy' => 'pa_nicotine',
+					'taxonomy' => $nicotine_taxonomy,
 					'field'    => 'slug',
 					'terms'    => $nicotine,
 					'operator' => 'IN',
 				);
 			}
-			if ( $puffs ) {
+			if ( $puffs && $puff_taxonomy ) {
 				$tax_query[] = array(
-					'taxonomy' => 'pa_puffs',
+					'taxonomy' => $puff_taxonomy,
 					'field'    => 'slug',
 					'terms'    => $puffs,
 					'operator' => 'IN',

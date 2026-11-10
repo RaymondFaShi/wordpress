@@ -47,8 +47,18 @@ $puffs      = isset( $_GET['puffs'] ) ? array_map( 'sanitize_text_field', (array
 $per_page   = isset( $_GET['per_page'] ) ? absint( wp_unslash( $_GET['per_page'] ) ) : 20; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 $orderby    = isset( $_GET['orderby'] ) ? wc_clean( wp_unslash( $_GET['orderby'] ) ) : 'menu_order'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 $per_page   = in_array( $per_page, array( 20, 40, 60 ), true ) ? $per_page : 20;
-$nicotine   = array_values( array_intersect( $nicotine, array( '0', '1', '2', '3', '4', '5' ) ) );
-$puffs      = array_values( array_intersect( $puffs, array( '0-5000', '5001-10000', '10001-20000', '20001-' ) ) );
+$nicotine_terms = vk_catalog_filter_terms( 'nicotine' );
+$puff_terms     = vk_catalog_filter_terms( 'puffs' );
+$nicotine_labels = array();
+foreach ( $nicotine_terms as $filter_term ) {
+	$nicotine_labels[ $filter_term->slug ] = $filter_term->name;
+}
+$puff_labels = array();
+foreach ( $puff_terms as $filter_term ) {
+	$puff_labels[ $filter_term->slug ] = $filter_term->name;
+}
+$nicotine = array_values( array_intersect( $nicotine, array_keys( $nicotine_labels ) ) );
+$puffs    = array_values( array_intersect( $puffs, array_keys( $puff_labels ) ) );
 $paged      = max( 1, (int) get_query_var( 'paged' ) );
 $found      = (int) $GLOBALS['wp_query']->found_posts;
 $total_pages = max( 1, (int) $GLOBALS['wp_query']->max_num_pages );
@@ -94,20 +104,6 @@ $page_link = static function ( $page ) use ( $archive_link ) {
 	return (int) $page > 1 ? add_query_arg( 'paged', (int) $page, $archive_link() ) : $archive_link();
 };
 
-$nicotine_labels = array(
-	'0' => '0mg（ノンニコチン）',
-	'1' => '1%',
-	'2' => '2%',
-	'3' => '3%',
-	'4' => '4%',
-	'5' => '5%',
-);
-$puff_labels = array(
-	'0-5000'      => '〜5,000回',
-	'5001-10000'  => '5,001〜10,000回',
-	'10001-20000' => '10,001〜20,000回',
-	'20001-'      => '20,001回〜',
-);
 $sort_labels = array(
 	'popularity' => '売れ筋',
 	'date'       => '新着',

@@ -700,7 +700,7 @@
   background:radial-gradient(circle,var(--cta) 0 4px,var(--white) 4.5px);
 }
 .woocommerce-checkout .vk-payment-card #payment .payment_methods > li > label::after{
-  content:"VISA / Mastercard / JCB / AMEX";
+  content:"VISA / Mastercard";
   margin-left:auto;
   color:var(--muted);
   font-size:11px;

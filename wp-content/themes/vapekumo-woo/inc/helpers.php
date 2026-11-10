@@ -26,7 +26,7 @@ function vk_logo( $footer = false ) {
 	$class = $footer ? 'site-logo site-logo--footer' : 'site-logo';
 	?>
 	<a class="<?php echo esc_attr( $class ); ?>" href="<?php echo esc_url( home_url( '/' ) ); ?>" aria-label="7s7 トップページへ">
-		<span class="site-logo__mark" aria-hidden="true">
+		<!-- <span class="site-logo__mark" aria-hidden="true">
 			<svg viewBox="0 0 32 32">
 				<defs>
 					<linearGradient id="vkGrad<?php echo $footer ? 'Footer' : ''; ?>" x1="0" y1="0" x2="1" y2="1">
@@ -40,7 +40,19 @@ function vk_logo( $footer = false ) {
 				<path d="M12.4 8.6c2.6-2.6 5.6-1.4 7.2 0" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity=".55"></path>
 			</svg>
 		</span>
-		<span class="site-logo__word">7s7</span>
+		<span class="site-logo__word">7s7</span> -->
+        <!-- <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 248 112" width="248" height="112" role="img" aria-label="7s7.cc">
+            <g transform="translate(34,43) scale(0.78)">
+                <path d="M 22 -22 C 22 -13 34 -13 34 -4" fill="none" stroke="#3A3D42" stroke-opacity="0.55" stroke-width="2" stroke-linecap="round"/>
+                <rect x="17" y="0" width="10" height="9" rx="3" fill="#3A3D42" fill-opacity="0.9"/>
+                <rect x="0" y="8" width="44" height="44" rx="13" fill="#3A3D42" fill-opacity="0.08" stroke="#3A3D42" stroke-opacity="0.6" stroke-width="2"/>
+                <path d="M 11 40 L 11 21" fill="none" stroke="#3A3D42" stroke-opacity="0.4" stroke-width="2" stroke-linecap="round"/>
+            </g>
+            <text x="86" y="81" text-anchor="start" font-family="'Avenir Next','Nunito','Helvetica Neue',Helvetica,Arial,sans-serif" font-size="42" font-weight="500" letter-spacing="1.5">
+                <tspan fill="#2C2F33">7s7</tspan><tspan fill="#6E8299">.cc</tspan>
+            </text>
+        </svg> -->
+        <img src="/wp-content/themes/vapekumo-woo/assets/images/logo.png" width="248" height="112" />
 	</a>
 	<?php
 }
@@ -298,6 +310,47 @@ function vk_product_variation_payload( $product ) {
 }
 
 /**
+ * Resolve a catalogue filter to its registered WooCommerce attribute taxonomy.
+ *
+ * @param string $filter nicotine|puffs.
+ * @return string
+ */
+function vk_catalog_filter_taxonomy( $filter ) {
+	$candidates = array(
+		'nicotine' => array( 'pa_nicotine' ),
+		'puffs'    => array( 'pa_puff_range', 'pa_puffs' ),
+	);
+	foreach ( $candidates[ $filter ] ?? array() as $taxonomy ) {
+		if ( taxonomy_exists( $taxonomy ) ) {
+			return $taxonomy;
+		}
+	}
+	return '';
+}
+
+/**
+ * Read the configured catalogue filter terms from WooCommerce.
+ *
+ * @param string $filter nicotine|puffs.
+ * @return WP_Term[]
+ */
+function vk_catalog_filter_terms( $filter ) {
+	$taxonomy = vk_catalog_filter_taxonomy( $filter );
+	if ( '' === $taxonomy ) {
+		return array();
+	}
+	$terms = get_terms(
+		array(
+			'taxonomy'   => $taxonomy,
+			'hide_empty' => false,
+			'orderby'    => 'menu_order',
+			'order'      => 'ASC',
+		)
+	);
+	return is_wp_error( $terms ) ? array() : $terms;
+}
+
+/**
  * Human-readable variation attributes for cart and checkout summaries.
  *
  * @param WC_Product $product Product object.
@@ -308,9 +361,10 @@ function vk_get_variation_attribute_lines( $product ) {
 		return array();
 	}
 	$labels = array(
-		'pa_flavor'   => 'フレーバー',
-		'pa_nicotine' => 'ニコチン',
-		'pa_puffs'    => '吸引回数',
+		'pa_flavor'     => 'フレーバー',
+		'pa_nicotine'   => 'ニコチン',
+		'pa_puff_range' => '吸引回数',
+		'pa_puffs'      => '吸引回数',
 	);
 	$lines = array();
 	foreach ( $product->get_variation_attributes() as $attribute => $value ) {
