@@ -1716,6 +1716,27 @@
     }
   };
 
+  var ImageFallback = {
+    init: function () {
+      var selector = '.product-card__media img, .u-fav__media img, .u-mini__media img';
+      function markFailed(image) {
+        if (!(image instanceof HTMLImageElement) || !image.matches(selector)) {
+          return;
+        }
+        image.classList.add('is-image-error');
+        image.closest('.product-card__media, .u-fav__media, .u-mini__media')?.classList.add('is-image-error');
+      }
+      document.addEventListener('error', function (event) {
+        markFailed(event.target);
+      }, true);
+      document.querySelectorAll(selector).forEach(function (image) {
+        if (image.complete && image.naturalWidth === 0) {
+          markFailed(image);
+        }
+      });
+    }
+  };
+
   var CartSelection = {
     init: function () {
       var form = document.getElementById('cartForm');
@@ -1836,6 +1857,7 @@
     CheckoutCardForm.init();
     CheckoutValidation.init();
     AuthTabs.init();
+    ImageFallback.init();
     CartSelection.init();
     ToTop.init();
     WooControls.init();

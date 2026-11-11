@@ -403,10 +403,24 @@ svg{display:block}
   position:relative;
   display:block;
   overflow:hidden;
+  aspect-ratio:1/1;
   border-radius:var(--radius) var(--radius) 0 0;
   background:var(--bg);
 }
-.product-card__media img{width:100%;aspect-ratio:1/1;object-fit:cover}
+.product-card__media img{display:block;width:100%;height:100%;object-fit:cover}
+.product-card__media.is-image-error::after{
+  content:"画像を読み込めません";
+  position:absolute;
+  top:50%;
+  left:50%;
+  z-index:1;
+  transform:translate(-50%,-50%);
+  color:var(--muted);
+  font-size:11px;
+  font-weight:600;
+  white-space:nowrap;
+}
+.product-card__media img.is-image-error{visibility:hidden}
 .product-card__badges{
   position:absolute;
   top:9px;

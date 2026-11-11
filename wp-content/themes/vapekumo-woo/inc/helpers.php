@@ -262,12 +262,34 @@ function vk_product_brand( $product ) {
 	if ( ! $product ) {
 		return '';
 	}
+
+	$brand_terms = wp_get_post_terms( $product->get_id(), 'product_brand' );
+	if ( $brand_terms && ! is_wp_error( $brand_terms ) ) {
+		return (string) $brand_terms[0]->name;
+	}
+
 	$brand = get_post_meta( $product->get_id(), '_vk_brand', true );
 	if ( $brand ) {
-		return $brand;
+		return (string) $brand;
 	}
-	$terms = get_the_terms( $product->get_id(), 'product_cat' );
-	return $terms && ! is_wp_error( $terms ) ? $terms[0]->name : '7s7';
+
+	foreach ( $product->get_attributes() as $attribute ) {
+		if ( ! in_array( $attribute->get_name(), array( 'pa_brand', 'brand' ), true ) ) {
+			continue;
+		}
+		$options = $attribute->get_options();
+		$value   = reset( $options );
+		if ( is_numeric( $value ) ) {
+			$term = get_term( (int) $value, 'pa_brand' );
+			if ( $term && ! is_wp_error( $term ) ) {
+				return $term->name;
+			}
+		} elseif ( is_string( $value ) && '' !== $value ) {
+			return $value;
+		}
+	}
+
+	return '7s7';
 }
 
 /**

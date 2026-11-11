@@ -22,7 +22,7 @@ get_header();
 		$rating_count = (int) $product->get_review_count();
 		$brand        = vk_product_brand( $product );
 		$brand_term   = get_term_by( 'name', $brand, 'product_brand' );
-		$brand_link   = $brand_term ? get_term_link( $brand_term ) : home_url( '/' . sanitize_title( $brand ) . '.html' );
+		$brand_link   = $brand_term ? get_term_link( $brand_term ) : ( '7s7' === $brand ? vk_shop_url() : home_url( '/' . sanitize_title( $brand ) . '.html' ) );
 		$user_favs    = is_user_logged_in() ? (array) get_user_meta( get_current_user_id(), '_vk_favorites', true ) : array();
 		$is_fav       = in_array( $product->get_id(), array_map( 'intval', $user_favs ), true );
 		$price        = (float) $product->get_price();

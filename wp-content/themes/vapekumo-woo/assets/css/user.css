@@ -508,8 +508,8 @@ body.woocommerce-account .user-account-content .woocommerce .u-order__actions a.
 }
 /* 商品カード系はホバー時にブランド色まで濃くする（common.css の .product-card と揃える） */
 .u-mini:hover{border-color:var(--brand)}
-.u-mini__media{display:block;overflow:hidden;background:var(--bg)}
-.u-mini__media img{width:100%;aspect-ratio:1/1;object-fit:cover;transition:transform .35s var(--ease)}
+.u-mini__media{position:relative;display:block;overflow:hidden;aspect-ratio:1/1;background:var(--bg)}
+.u-mini__media img{display:block;width:100%;height:100%;object-fit:cover;transition:transform .35s var(--ease)}
 .u-mini__body{display:flex;flex-direction:column;flex:1 1 auto;gap:3px;padding:9px 10px 11px}
 .u-mini__brand{font-size:9.5px;font-weight:700;letter-spacing:.06em;color:var(--muted)}
 .u-mini__name{font-size:11.5px;font-weight:600;line-height:1.45;color:var(--ink)}
@@ -529,8 +529,23 @@ body.woocommerce-account .user-account-content .woocommerce .u-order__actions a.
 .u-fav-list{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--gap)}
 .u-fav{position:relative;display:flex;flex-direction:column;height:100%;border:1px solid var(--line);border-radius:var(--radius);background:var(--white);overflow:hidden;transition:border-color .2s var(--ease)}
 .u-fav:hover{border-color:var(--brand)}
-.u-fav__media{position:relative;display:block;overflow:hidden;background:var(--bg)}
-.u-fav__media img{width:100%;aspect-ratio:1/1;object-fit:cover;transition:transform .35s var(--ease)}
+.u-fav__media{position:relative;display:block;overflow:hidden;aspect-ratio:1/1;background:var(--bg)}
+.u-fav__media img{display:block;width:100%;height:100%;object-fit:cover;transition:transform .35s var(--ease)}
+.u-fav__media.is-image-error::after,
+.u-mini__media.is-image-error::after{
+  content:"画像を読み込めません";
+  position:absolute;
+  top:50%;
+  left:50%;
+  z-index:1;
+  transform:translate(-50%,-50%);
+  color:var(--muted);
+  font-size:10px;
+  font-weight:600;
+  white-space:nowrap;
+}
+.u-fav__media img.is-image-error,
+.u-mini__media img.is-image-error{visibility:hidden}
 .u-fav__remove{
   position:absolute;
   top:8px;
