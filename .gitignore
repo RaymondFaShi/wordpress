@@ -72,3 +72,4 @@ node_modules/
 # ==================================
 
 /wp-config.php
+/wp-content/themes/vapekumo-woo/inc/helpers.php
