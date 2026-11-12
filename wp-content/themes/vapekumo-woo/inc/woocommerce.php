@@ -538,6 +538,27 @@ function vk_checkout_privacy_text( $text, $type ) {
 add_filter( 'woocommerce_get_privacy_policy_text', 'vk_checkout_privacy_text', 10, 2 );
 
 /**
+ * Validate custom registration fields through WooCommerce's registration flow.
+ *
+ * @param WP_Error $errors Registration errors.
+ * @return WP_Error
+ */
+function vk_validate_member_registration( $errors ) {
+	if ( empty( $_POST['age_confirmed'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		$errors->add( 'vk_age_required', '20歳以上であることへの同意が必要です。' );
+	}
+
+	$password         = isset( $_POST['password'] ) ? (string) wp_unslash( $_POST['password'] ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+	$password_confirm = isset( $_POST['password_confirm'] ) ? (string) wp_unslash( $_POST['password_confirm'] ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+	if ( $password !== $password_confirm ) {
+		$errors->add( 'vk_password_mismatch', '確認用パスワードが一致しません。' );
+	}
+
+	return $errors;
+}
+add_filter( 'woocommerce_process_registration_errors', 'vk_validate_member_registration' );
+
+/**
  * Keep account navigation concise.
  *
  * @param array $items Menu items.

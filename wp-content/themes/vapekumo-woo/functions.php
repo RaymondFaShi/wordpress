@@ -230,7 +230,7 @@ add_action( 'deleted_post', 'vk_refresh_root_product_rewrites', 20 );
  * their existing one-segment permalinks.
  */
 function vk_register_root_product_rewrites() {
-	$rewrite_version = '2026-11-05-2';
+	$rewrite_version = '2026-11-12-1';
 	$needs_sync      = get_option( 'vk_root_product_rewrite_version' ) !== $rewrite_version;
 	if ( $needs_sync ) {
 		delete_transient( 'vk_root_product_slugs' );
@@ -263,6 +263,7 @@ function vk_register_root_product_rewrites() {
 	}
 
 	add_rewrite_rule( '^member/?$', 'index.php?pagename=member', 'top' );
+	add_rewrite_rule( '^member/logout/?$', 'index.php?pagename=member&vk_logout=1', 'top' );
 	foreach ( array( 'orders', 'edit-account', 'edit-address', 'favorites', 'reviews', 'newsletter', 'view-order', 'lost-password', 'customer-logout' ) as $endpoint ) {
 		add_rewrite_rule(
 			'^member/' . preg_quote( $endpoint, '/' ) . '(?:/([^/]+))?/?$',
@@ -276,6 +277,76 @@ function vk_register_root_product_rewrites() {
 	}
 }
 add_action( 'init', 'vk_register_root_product_rewrites', 20 );
+
+/**
+ * Register the custom member logout query var.
+ *
+ * @param array $vars Public query vars.
+ * @return array
+ */
+function vk_member_logout_query_var( $vars ) {
+	$vars[] = 'vk_logout';
+	return $vars;
+}
+add_filter( 'query_vars', 'vk_member_logout_query_var' );
+
+/**
+ * Build the nonce-protected member logout URL.
+ *
+ * @param string $redirect Optional redirect destination.
+ * @return string
+ */
+function vk_member_logout_url( $redirect = '' ) {
+	$target = $redirect ?: vk_account_url();
+	return wp_nonce_url(
+		add_query_arg( 'redirect_to', $target, vk_account_url( 'logout' ) ),
+		'vk_member_logout'
+	);
+}
+
+/**
+ * Replace core logout links with the front-end member logout URL.
+ *
+ * @param string $logout_url Core logout URL.
+ * @param string $redirect   Redirect destination.
+ * @return string
+ */
+function vk_filter_member_logout_url( $logout_url, $redirect ) {
+	if ( is_admin() ) {
+		return $logout_url;
+	}
+	return vk_member_logout_url( $redirect );
+}
+add_filter( 'logout_url', 'vk_filter_member_logout_url', 10, 2 );
+
+/**
+ * Handle logout through /member/logout/.
+ */
+function vk_handle_member_logout() {
+	if ( is_admin() || wp_doing_ajax() || wp_doing_cron() ) {
+		return;
+	}
+
+	$path = trim( (string) wp_parse_url( $_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH ), '/' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized
+	if ( 'member/customer-logout' === $path ) {
+		wp_safe_redirect( vk_member_logout_url(), 302 );
+		exit;
+	}
+	if ( 'member/logout' !== $path || ! is_user_logged_in() ) {
+		return;
+	}
+
+	$nonce = isset( $_GET['_wpnonce'] ) ? sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ) : '';
+	if ( ! wp_verify_nonce( $nonce, 'vk_member_logout' ) ) {
+		wp_die( 'ログアウトリンクが無効です。', 'ログアウトできません', array( 'response' => 403 ) );
+	}
+
+	wp_logout();
+	$redirect = isset( $_GET['redirect_to'] ) ? esc_url_raw( wp_unslash( $_GET['redirect_to'] ) ) : vk_account_url();
+	wp_safe_redirect( $redirect ?: vk_account_url() );
+	exit;
+}
+add_action( 'template_redirect', 'vk_handle_member_logout', 1 );
 
 /**
  * Track product searches for the popular-keyword strip.

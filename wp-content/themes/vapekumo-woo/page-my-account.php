@@ -51,12 +51,15 @@ get_header();
 								<div class="tab-content">
 									<div class="tab-pane fade show active" id="tabLogin" role="tabpanel" aria-labelledby="tabLoginBtn" tabindex="0">
 										<div class="auth-card__body">
-											<form class="auth-form" method="post" action="<?php echo esc_url( wp_login_url( vk_account_url() ) ); ?>">
-												<div class="afield"><label class="afield__label" for="loginId">ユーザー名またはメールアドレス<span class="afield__req">必須</span></label><input class="afield__input" id="loginId" name="log" type="text" autocomplete="username" placeholder="例）7s7 または you@example.com" required></div>
-												<div class="afield"><label class="afield__label" for="loginPassword">パスワード<span class="afield__req">必須</span></label><div class="afield__pw"><input class="afield__input" id="loginPassword" name="pwd" type="password" autocomplete="current-password" placeholder="パスワードを入力" required><button class="afield__pwbtn js-pw-toggle" type="button" data-target="loginPassword" aria-label="パスワードを表示" aria-pressed="false"><i class="bi bi-eye" aria-hidden="true"></i></button></div></div>
+											<form class="auth-form woocommerce-form woocommerce-form-login login" method="post" action="<?php echo esc_url( vk_account_url() ); ?>">
+												<?php do_action( 'woocommerce_login_form_start' ); ?>
+												<div class="afield"><label class="afield__label" for="loginId">ユーザー名またはメールアドレス<span class="afield__req">必須</span></label><input class="afield__input" id="loginId" name="username" type="text" autocomplete="username" placeholder="例）7s7 または you@example.com" required></div>
+												<div class="afield"><label class="afield__label" for="loginPassword">パスワード<span class="afield__req">必須</span></label><div class="afield__pw"><input class="afield__input" id="loginPassword" name="password" type="password" autocomplete="current-password" placeholder="パスワードを入力" required><button class="afield__pwbtn js-pw-toggle" type="button" data-target="loginPassword" aria-label="パスワードを表示" aria-pressed="false"><i class="bi bi-eye" aria-hidden="true"></i></button></div></div>
 												<div class="auth-form__row"><label class="auth-check" for="loginKeep"><input type="checkbox" id="loginKeep" name="rememberme" value="forever" checked><span>ログイン状態を保持する</span></label><a class="auth-link" href="<?php echo esc_url( wc_lostpassword_url() ); ?>">パスワードをお忘れですか？</a></div>
-												<input type="hidden" name="redirect_to" value="<?php echo esc_url( vk_account_url() ); ?>">
-												<button class="btn btn-cta auth-submit" type="submit">ログイン</button>
+												<input type="hidden" name="redirect" value="<?php echo esc_url( vk_account_url() ); ?>">
+												<?php wp_nonce_field( 'woocommerce-login', 'woocommerce-login-nonce' ); ?>
+												<button class="btn btn-cta auth-submit" type="submit" name="login" value="ログイン">ログイン</button>
+												<?php do_action( 'woocommerce_login_form_end' ); ?>
 												<p class="auth-note">初めてのご利用ですか？ <a class="auth-link js-goto-tab" href="#tabRegister" data-bs-target="#tabRegister">新規会員登録はこちら</a></p>
 												<p class="auth-note auth-note--center">会員登録なしでご注文された方は <a class="auth-link" href="<?php echo esc_url( vk_account_url( 'orders' ) ); ?>">ゲスト注文・支払いを確認</a></p>
 											</form>
@@ -64,16 +67,17 @@ get_header();
 									</div>
 									<div class="tab-pane fade" id="tabRegister" role="tabpanel" aria-labelledby="tabRegisterBtn" tabindex="0">
 										<div class="auth-card__body">
-											<form class="auth-form woocommerce-form-register register" method="post" action="<?php echo esc_url( vk_account_url() ); ?>">
+											<form class="auth-form woocommerce-form woocommerce-form-register register" method="post" action="<?php echo esc_url( vk_account_url() ); ?>" <?php do_action( 'woocommerce_register_form_tag' ); ?>>
 												<?php do_action( 'woocommerce_register_form_start' ); ?>
 												<div class="afield"><label class="afield__label" for="regEmail">メールアドレス<span class="afield__req">必須</span></label><input class="afield__input" id="regEmail" name="email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com" required></div>
 												<div class="afield"><label class="afield__label" for="regPassword">パスワード<span class="afield__req">必須</span></label><div class="afield__pw"><input class="afield__input" id="regPassword" name="password" type="password" autocomplete="new-password" placeholder="8文字以上で入力" required><button class="afield__pwbtn js-pw-toggle" type="button" data-target="regPassword" aria-label="パスワードを表示" aria-pressed="false"><i class="bi bi-eye" aria-hidden="true"></i></button></div></div>
 												<div class="afield"><label class="afield__label" for="regPasswordConfirm">パスワード（確認）<span class="afield__req">必須</span></label><div class="afield__pw"><input class="afield__input" id="regPasswordConfirm" name="password_confirm" type="password" autocomplete="new-password" placeholder="もう一度入力" minlength="8" required><button class="afield__pwbtn js-pw-toggle" type="button" data-target="regPasswordConfirm" aria-label="パスワードを表示" aria-pressed="false"><i class="bi bi-eye" aria-hidden="true"></i></button></div><p class="afield__hint">確認のため、同じパスワードを再入力してください。</p></div>
 												<div class="afield"><span class="afield__label">年齢確認<span class="afield__req">必須</span></span><label class="auth-check" for="regAgree"><input type="checkbox" id="regAgree" name="age_confirmed" value="1" required><span>私は20歳以上で、利用規約とプライバシーポリシーに同意します</span></label><p class="auth-terms">詳しくは<a class="auth-link" href="<?php echo esc_url( home_url( '/terms/' ) ); ?>">利用規約</a>・<a class="auth-link" href="<?php echo esc_url( home_url( '/privacy/' ) ); ?>">プライバシーポリシー</a>をご確認ください。</p></div>
-												<!-- <?php do_action( 'woocommerce_register_form' ); ?> -->
-												<!-- <?php wp_nonce_field( 'woocommerce-register', 'woocommerce-register-nonce' ); ?> -->
-												<input type="hidden" name="action" value="register">
+												<?php do_action( 'woocommerce_register_form' ); ?>
+												<input type="hidden" name="redirect" value="<?php echo esc_url( vk_account_url() ); ?>">
+												<?php wp_nonce_field( 'woocommerce-register', 'woocommerce-register-nonce' ); ?>
 												<button class="btn btn-cta auth-submit" type="submit" name="register" value="会員登録する">会員登録する</button>
+												<?php do_action( 'woocommerce_register_form_end' ); ?>
 												<p class="auth-note">すでにアカウントをお持ちですか？ <a class="auth-link js-goto-tab" href="#tabLogin" data-bs-target="#tabLogin">ログインはこちら</a></p>
 											</form>
 										</div>
