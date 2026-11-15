@@ -999,6 +999,109 @@ body.woocommerce-account .user-account-content .woocommerce .u-order__actions a.
 .u-post__title{display:block;margin-top:6px;font-size:12px;font-weight:700;line-height:1.5;color:var(--ink)}
 
 /* --------------------------------------------------------------------------
+   15. 注文詳細
+   -------------------------------------------------------------------------- */
+.u-order-detail{display:flex;flex-direction:column;gap:14px}
+.u-od-hero{
+  padding:18px;
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  background:linear-gradient(135deg,#f4f9ff 0%,var(--white) 62%);
+}
+.u-od-hero__top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.u-od-eyebrow{margin-bottom:4px;font-size:9.5px;font-weight:700;letter-spacing:.16em;color:var(--cta)}
+.u-od-hero__number{font-size:15px;font-weight:600;color:var(--navy)}
+.u-od-hero__number b{font-size:20px;font-weight:800}
+.u-od-hero__date{margin-top:4px;font-size:11px;color:var(--muted)}
+.u-od-progress{
+  position:relative;
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  margin-top:22px;
+}
+.u-od-progress::before{
+  content:"";
+  position:absolute;
+  top:16px;
+  right:12.5%;
+  left:12.5%;
+  height:2px;
+  background:var(--line-strong);
+}
+.u-od-progress__step{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:7px;text-align:center}
+.u-od-progress__dot{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:34px;
+  height:34px;
+  border:2px solid var(--line-strong);
+  border-radius:50%;
+  background:var(--white);
+  color:var(--muted);
+  font-size:13px;
+}
+.u-od-progress__label{font-size:10.5px;font-weight:600;color:var(--muted)}
+.u-od-progress__step.is-done .u-od-progress__dot{border-color:var(--cta);background:var(--cta);color:#fff}
+.u-od-progress__step.is-done .u-od-progress__label{color:var(--navy)}
+.u-od-progress__step.is-current .u-od-progress__dot{box-shadow:0 0 0 5px rgba(30,123,239,.14)}
+.u-od-progress.is-halted::before{background:var(--line)}
+.u-od-progress.is-halted .u-od-progress__dot{border-color:var(--line);background:var(--bg);color:var(--muted)}
+.u-od-halted{margin-top:14px;padding:9px 11px;border-radius:var(--radius-sm);background:#f8f9fb;font-size:11px;color:var(--muted);text-align:center}
+
+.u-od-layout{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(270px,.75fr);align-items:start;gap:14px}
+.u-od-main{display:flex;flex-direction:column;gap:12px;min-width:0}
+.u-od-side{position:sticky;top:16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.u-od-card,
+.u-od-summary{overflow:hidden;border:1px solid var(--line);border-radius:var(--radius);background:var(--white)}
+.u-od-card__head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 15px;border-bottom:1px solid var(--line);background:var(--bg)}
+.u-od-card__head h2{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;color:var(--navy)}
+.u-od-card__head .bi{color:var(--cta)}
+.u-od-card__head > span{font-size:10.5px;color:var(--muted)}
+.u-od-items{padding:0}
+.u-od-item{display:grid;grid-template-columns:72px minmax(0,1fr) auto;align-items:center;gap:12px;padding:14px 15px}
+.u-od-item + .u-od-item{border-top:1px dashed var(--line)}
+.u-od-item__thumb{display:block;width:72px;height:72px;overflow:hidden;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--bg)}
+.u-od-item__thumb img{display:block;width:100%;height:100%;object-fit:cover}
+.u-od-item__body{min-width:0}
+.u-od-item__brand{font-size:9.5px;font-weight:700;letter-spacing:.07em;color:var(--muted);text-transform:uppercase}
+.u-od-item__name{margin-top:2px;font-size:13px;font-weight:700;line-height:1.5;color:var(--ink)}
+.u-od-item__name a:hover{color:var(--cta)}
+.u-od-item__meta{margin-top:4px;font-size:10.5px;line-height:1.55;color:var(--muted)}
+.u-od-item__price{display:flex;flex-direction:column;align-items:flex-end;gap:3px;font-size:10.5px;color:var(--muted);white-space:nowrap}
+.u-od-item__price b{font-size:13px;color:var(--navy)}
+.u-od-address-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.u-od-address{padding:15px;font-size:12px;line-height:1.8;color:var(--ink)}
+.u-od-address br{display:block;content:"";margin-bottom:1px}
+.u-od-contact{display:flex;align-items:center;gap:6px;margin-top:7px;color:var(--muted)}
+.u-od-contact .bi{color:var(--cta)}
+.u-od-info-grid{display:grid;grid-template-columns:1fr 1fr;column-gap:24px;margin:0;padding:0 15px}
+.u-od-info-grid > div{display:flex;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.u-od-info-grid > div:nth-last-child(-n+2){border-bottom:0}
+.u-od-info-grid dt{font-size:11px;color:var(--muted)}
+.u-od-info-grid dd{margin:0;font-size:11.5px;font-weight:600;color:var(--navy);text-align:right}
+.u-od-note{padding:15px;font-size:12px;line-height:1.75;color:var(--ink);white-space:pre-line}
+.u-od-timeline{padding:14px 18px 16px}
+.u-od-timeline li{position:relative;display:flex;gap:12px;padding-bottom:16px}
+.u-od-timeline li:last-child{padding-bottom:0}
+.u-od-timeline li:not(:last-child)::before{content:"";position:absolute;top:10px;bottom:0;left:4px;width:1px;background:var(--line-strong)}
+.u-od-timeline__dot{position:relative;z-index:1;flex:0 0 auto;width:9px;height:9px;margin-top:4px;border-radius:50%;background:var(--cta);box-shadow:0 0 0 3px var(--blue)}
+.u-od-timeline time{font-size:10px;color:var(--muted)}
+.u-od-timeline p{margin-top:3px;font-size:11.5px;line-height:1.65;color:var(--ink)}
+.u-od-summary__rows{margin:0;padding:14px 15px}
+.u-od-summary__rows > div{display:flex;justify-content:space-between;gap:12px;padding:6px 0;font-size:11.5px}
+.u-od-summary__rows dt{color:var(--muted)}
+.u-od-summary__rows dd{margin:0;font-weight:700;color:var(--navy);text-align:right}
+.u-od-summary__rows .is-discount dd{color:var(--red)}
+.u-od-summary__rows .u-od-summary__total{margin-top:7px;padding-top:13px;border-top:1px solid var(--line-strong);align-items:baseline}
+.u-od-summary__total dt{font-size:13px;font-weight:700;color:var(--navy)}
+.u-od-summary__total dd{font-size:22px}
+.u-od-actions{display:grid;gap:8px;padding:0 15px 15px}
+.u-od-actions .btn{width:100%;justify-content:center}
+.u-od-back{display:inline-flex;align-items:center;justify-content:center;gap:6px;font-size:11.5px;font-weight:600;color:var(--cta)}
+.u-od-back:hover{color:var(--cta-dark)}
+
+/* --------------------------------------------------------------------------
    16. レスポンシブ
    -------------------------------------------------------------------------- */
 @media (max-width:1199.98px){
@@ -1021,6 +1124,9 @@ body.woocommerce-account .user-account-content .woocommerce .u-order__actions a.
   .u-quick{grid-template-columns:1fr}
   .u-addr-list{grid-template-columns:1fr}
   .u-rail{grid-auto-columns:calc((100% - var(--gap)) / 2)}
+  .u-od-layout{grid-template-columns:1fr}
+  .u-od-side{position:static}
+  .u-od-address-grid{grid-template-columns:1fr}
 }
 
 @media (max-width:575.98px){
@@ -1034,4 +1140,14 @@ body.woocommerce-account .user-account-content .woocommerce .u-order__actions a.
   .u-order__item{gap:10px;padding:12px}
   .u-order__thumb{width:56px;height:56px}
   .u-order__sum{font-size:12.5px}
+  .u-od-hero__top{align-items:flex-start}
+  .u-od-hero__number b{font-size:18px}
+  .u-od-progress__dot{width:30px;height:30px;font-size:11px}
+  .u-od-progress::before{top:14px}
+  .u-od-progress__label{font-size:9.5px}
+  .u-od-item{grid-template-columns:60px minmax(0,1fr);align-items:start;padding:12px}
+  .u-od-item__thumb{width:60px;height:60px}
+  .u-od-item__price{grid-column:2;align-items:center;flex-direction:row;justify-content:space-between}
+  .u-od-info-grid{grid-template-columns:1fr}
+  .u-od-info-grid > div:nth-last-child(2){border-bottom:1px solid var(--line)}
 }

@@ -263,17 +263,31 @@ function vk_product_brand( $product ) {
 		return '';
 	}
 
-	$brand_terms = wp_get_post_terms( $product->get_id(), 'product_brand' );
+	$brand_product = $product;
+	if ( $product instanceof WC_Product_Variation ) {
+		$parent_product = wc_get_product( $product->get_parent_id() );
+		if ( $parent_product ) {
+			$brand_product = $parent_product;
+		}
+	}
+
+	$brand_terms = wp_get_post_terms( $brand_product->get_id(), 'product_brand' );
 	if ( $brand_terms && ! is_wp_error( $brand_terms ) ) {
 		return (string) $brand_terms[0]->name;
 	}
 
-	$brand = get_post_meta( $product->get_id(), '_vk_brand', true );
+	$brand = get_post_meta( $brand_product->get_id(), '_vk_brand', true );
 	if ( $brand ) {
 		return (string) $brand;
 	}
 
-	foreach ( $product->get_attributes() as $attribute ) {
+	foreach ( $brand_product->get_attributes() as $attribute_key => $attribute ) {
+		if ( is_string( $attribute ) && in_array( $attribute_key, array( 'pa_brand', 'brand' ), true ) && '' !== $attribute ) {
+			return $attribute;
+		}
+		if ( ! is_object( $attribute ) || ! method_exists( $attribute, 'get_name' ) ) {
+			continue;
+		}
 		if ( ! in_array( $attribute->get_name(), array( 'pa_brand', 'brand' ), true ) ) {
 			continue;
 		}
