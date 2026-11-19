@@ -8,18 +8,23 @@
 defined( 'ABSPATH' ) || exit;
 get_header();
 
-$ranking = wc_get_products(
-	array(
-		'status'  => 'publish',
-		'limit'   => 10,
-		'orderby' => 'meta_value_num',
-		'meta_key' => 'total_sales',
-		'order'   => 'DESC',
-	)
-);
-$latest = wc_get_products( array( 'status' => 'publish', 'limit' => 8, 'orderby' => 'date', 'order' => 'DESC' ) );
-$sale   = wc_get_products( array( 'status' => 'publish', 'limit' => 8, 'category' => array( 'sale' ) ) );
-$recommended = wc_get_products( array( 'status' => 'publish', 'limit' => 8, 'orderby' => 'meta_value_num', 'meta_key' => 'total_sales', 'order' => 'DESC' ) );
+// $ranking = wc_get_products(
+// 	array(
+// 		'status'  => 'publish',
+// 		'limit'   => 10,
+// 		'orderby' => 'meta_value_num',
+// 		'meta_key' => 'total_sales',
+// 		'order'   => 'DESC',
+// 	)
+// );
+// $latest = wc_get_products( array( 'status' => 'publish', 'limit' => 8, 'orderby' => 'date', 'order' => 'DESC' ) );
+// $sale   = wc_get_products( array( 'status' => 'publish', 'limit' => 8, 'category' => array( 'sale' ) ) );
+// $recommended = wc_get_products( array( 'status' => 'publish', 'limit' => 8, 'orderby' => 'meta_value_num', 'meta_key' => 'total_sales', 'order' => 'DESC' ) );
+
+$ranking = wc_get_products( [ 'include' => [ 973, 877, 563, 915, 535 ], 'limit' => -1 ] );
+$latest = wc_get_products( [ 'include' => [ 946, 898, 712, 694, 1052 ], 'limit' => -1 ] );
+$sale   = wc_get_products( [ 'include' => [ 973, 877, 563, 915, 535 ], 'limit' => -1 ] );
+$recommended = wc_get_products( [ 'include' => [ 973, 877, 563, 915, 535 ], 'limit' => -1 ] );
 $categories = array_filter(
 	array_map(
 		static function ( $slug ) {
