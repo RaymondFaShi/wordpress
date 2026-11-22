@@ -520,6 +520,15 @@ function vk_pre_get_posts( $query ) {
 	if ( is_admin() || ! $query->is_main_query() ) {
 		return;
 	}
+	if ( $query->is_home() ) {
+		// $paged = max( 1, (int) $query->get( 'paged' ), (int) $query->get( 'page' ) );
+		// $query->set( 'ignore_sticky_posts', true );
+		// $query->set( 'posts_per_page', 1 === $paged ? 9 : 16 );
+		// if ( $paged > 1 ) {
+		// 	$query->set( 'offset', 9 + ( ( $paged - 2 ) * 16 ) );
+		// }
+        $query->set( 'posts_per_page', 17 );
+	}
 	if ( function_exists( 'is_shop' ) && ( $query->is_post_type_archive( 'product' ) || $query->is_tax( 'product_cat' ) || $query->is_tax( 'product_tag' ) ) ) {
 		$per_page = isset( $_GET['per_page'] ) ? absint( wp_unslash( $_GET['per_page'] ) ) : 20; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		if ( ! in_array( $per_page, array( 20, 40, 60 ), true ) ) {

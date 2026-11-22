@@ -645,6 +645,76 @@ function vk_breadcrumbs( $items = array() ) {
 }
 
 /**
+ * Render the blog pagination using the shared pager design.
+ *
+ * @param WP_Query|null $query Optional query.
+ */
+function vk_blog_pagination( $query = null ) {
+	$query = $query instanceof WP_Query ? $query : $GLOBALS['wp_query'];
+	$total_posts = max( 0, (int) $query->found_posts );
+	$is_home     = ! empty( $query->is_home );
+	if ( $is_home ) {
+		if ( $total_posts <= 9 ) {
+			return;
+		}
+		$total_pages = 1 + (int) ceil( ( $total_posts - 9 ) / 16 );
+	} else {
+		$total_pages = max( 1, (int) $query->max_num_pages );
+		if ( $total_pages <= 1 ) {
+			return;
+		}
+	}
+	$current     = max( 1, (int) $query->get( 'paged' ), (int) $query->get( 'page' ) );
+	$current     = min( $current, $total_pages );
+
+	$pages = array();
+	if ( $total_pages <= 7 ) {
+		$pages = range( 1, $total_pages );
+	} else {
+		$pages[] = 1;
+		if ( $current > 3 ) {
+			$pages[] = 'gap';
+		}
+		$pages = array_merge( $pages, range( max( 2, $current - 1 ), min( $total_pages - 1, $current + 1 ) ) );
+		if ( $current < $total_pages - 2 ) {
+			$pages[] = 'gap';
+		}
+		$pages[] = $total_pages;
+	}
+	?>
+	<nav class="pager blog__pager" aria-label="ブログのページ送り">
+		<ul class="pager__list">
+			<li>
+				<?php if ( $current > 1 ) : ?>
+					<a class="pager__link" href="<?php echo esc_url( get_pagenum_link( $current - 1 ) ); ?>" rel="prev">前へ</a>
+				<?php else : ?>
+					<span class="pager__link is-disabled" aria-disabled="true">前へ</span>
+				<?php endif; ?>
+			</li>
+			<?php foreach ( $pages as $page ) : ?>
+				<li>
+					<?php if ( 'gap' === $page ) : ?>
+						<span class="pager__gap" aria-hidden="true">…</span>
+					<?php elseif ( (int) $page === $current ) : ?>
+						<span class="pager__link is-active" aria-current="page"><?php echo esc_html( (string) $page ); ?></span>
+					<?php else : ?>
+						<a class="pager__link" href="<?php echo esc_url( get_pagenum_link( (int) $page ) ); ?>"><?php echo esc_html( (string) $page ); ?></a>
+					<?php endif; ?>
+				</li>
+			<?php endforeach; ?>
+			<li>
+				<?php if ( $current < $total_pages ) : ?>
+					<a class="pager__link" href="<?php echo esc_url( get_pagenum_link( $current + 1 ) ); ?>" rel="next">次へ</a>
+				<?php else : ?>
+					<span class="pager__link is-disabled" aria-disabled="true">次へ</span>
+				<?php endif; ?>
+			</li>
+		</ul>
+	</nav>
+	<?php
+}
+
+/**
  * Render the mini cart used by the header.
  */
 function vk_mini_cart() {

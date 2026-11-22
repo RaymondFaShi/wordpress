@@ -35,7 +35,7 @@ $blog_categories = get_categories( array( 'hide_empty' => true ) );
 					<?php endif; ?>
 				<?php endwhile; ?>
 				<?php if ( $article_index > 1 ) : ?></div><?php endif; ?>
-				<?php the_posts_pagination( array( 'prev_text' => '前へ', 'next_text' => '次へ' ) ); ?>
+				<?php vk_blog_pagination(); ?>
 			<?php else : ?>
 				<div class="woocommerce-info">記事を準備しています。</div>
 			<?php endif; ?>

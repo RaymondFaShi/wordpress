@@ -23,17 +23,17 @@ function vk_has_seo_plugin() {
  * @return string
  */
 function vk_seo_archive_title( $title ) {
-	if ( is_product_taxonomy() ) {
-		$term = get_queried_object();
-		if ( $term instanceof WP_Term ) {
-			$page  = max( 1, (int) get_query_var( 'paged' ) );
-			$title = $term->name . '一覧｜全' . (int) $GLOBALS['wp_query']->found_posts . '件から選べる電子タバコ通販 7s7';
-			if ( $page > 1 ) {
-				$title = $term->name . '一覧 ' . $page . 'ページ目｜7s7';
-			}
-			return $title;
-		}
-	}
+	// if ( is_product_taxonomy() ) {
+	// 	$term = get_queried_object();
+	// 	if ( $term instanceof WP_Term ) {
+	// 		$page  = max( 1, (int) get_query_var( 'paged' ) );
+	// 		$title = $term->name . '一覧｜全' . (int) $GLOBALS['wp_query']->found_posts . '件から選べる電子タバコ通販 7s7';
+	// 		if ( $page > 1 ) {
+	// 			$title = $term->name . '一覧 ' . $page . 'ページ目｜7s7';
+	// 		}
+	// 		return $title;
+	// 	}
+	// }
 	return $title;
 }
 add_filter( 'wpseo_title', 'vk_seo_archive_title', 99 );
